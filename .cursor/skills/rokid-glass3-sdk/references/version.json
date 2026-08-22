@@ -1,0 +1,15 @@
+{
+  "name": "rokid-glass3-sdk-skill",
+  "docsVersion": "dev",
+  "changelogVersion": "V2.2.0-E(2026-8-6)",
+  "sdk": {
+    "glasses": "com.rokid.security:glass3.open.sdk:2.2.0-E",
+    "phone": "com.rokid.security:phone.sdk:2.2.0-E"
+  },
+  "demoPackage": "glass3_sdk_demo.zip",
+  "productManual": {
+    "source": "skill-sources/product-manual.md",
+    "reference": "references/product-manual.md"
+  },
+  "sourceDocCount": 148
+}
