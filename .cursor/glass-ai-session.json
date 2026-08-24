@@ -1,0 +1,36 @@
+{
+  "history": [
+    {
+      "role": "user",
+      "content": "开始看店"
+    },
+    {
+      "role": "assistant",
+      "content": "{\"hud\": \"好我看一下\", \"cmd\": \"look\", \"question\": \"\", \"speak\": \"好，我看一下这家店。\", \"audio\": true}"
+    },
+    {
+      "role": "user",
+      "content": "开始看"
+    },
+    {
+      "role": "assistant",
+      "content": "{\"hud\": \"好我看一下\", \"cmd\": \"look\", \"question\": \"\", \"speak\": \"好，我看一下这家店。\", \"audio\": true}"
+    },
+    {
+      "role": "user",
+      "content": "你好"
+    },
+    {
+      "role": "assistant",
+      "content": "我在。你可以直接问我问题，也可以说看店让我看眼前。"
+    },
+    {
+      "role": "user",
+      "content": "看店"
+    },
+    {
+      "role": "assistant",
+      "content": "好，我看一下眼前。"
+    }
+  ]
+}

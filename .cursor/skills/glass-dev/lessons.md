@@ -1,0 +1,102 @@
+# Field lessons
+
+按时间倒序。稳定结论再提升到 `SKILL.md`。
+
+## 2026-08-24 — AI Chat 是问答会话，拍照只是工具
+
+- 场景：用户要像乐奇一样连续对话：提问 → AI 回答并播报。看店识别只是 agent 可调用的能力。
+- 误判：把「开始」映射成拍照，热路径做成口令机。
+- 根因：官方是 `startAiChat` → `toAiChat(question)` → 流式 `onAiChatAnswer` → TTS；`onAiTakePhoto` 才是设备动作。本机企业 AI Chat 绑不上，自研 host 应对齐这条时序。
+- 以后先做：`scripts/glass_ai_host.py` 默认 `tool=none` 只回答；明确「看店/拍照」才 `look`。密钥放 `.cursor/glass-ai.env`（`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`）。
+- 不要做：把每句 ASR 都当成看店指令。
+
+## 2026-08-24 — AI 热路径在电脑常驻进程，播报走扬声器拉 WAV
+
+- 场景：用户要和 AI 一直说话，由 AI 认意图并控眼镜。Cursor 暂代 AI，以后换手机云端。
+- 误判：电脑脚本听到「开始」就拍照，等于把热路径做成口令机。
+- 根因：产品脑在 AI 会话里。inbox 只投递 `{text, ts, hasPhoto}`。回控仍是 `look|next|ask|hud`。Cursor 聊天要靠 `UTTERANCE` 唤醒，不能让用户打「说完了」。
+- 以后先做：inbox 不分类、不 ADB；ASR 尽量出完整原话；本窗把每条 UTTERANCE 当作用户对 AI 说的话。以后把同一 JSON 改打到手机云端即可。
+- 不要做：在 Mac 脚本或眼镜上写死「开始→拍照」当正式方案。
+
+## 2026-08-24 — 眼镜 POST HTTP 到 Mac 会被 Cleartext 拦截
+
+- 场景：Vosk 已出字 `开始` / `开始认定`，Cursor inbox 仍是 `ping-from-mac`。
+- 误判：防火墙挡了 18765，或眼镜没发出请求。
+- 根因：targetSdk 34 默认禁止明文 HTTP。`InboxClient` 打 `http://192.168.0.122:18765/utterance` 抛 `Cleartext HTTP traffic ... not permitted`。
+- 以后先做：`application` 加 `android:usesCleartextTraffic="true"`（或只放行局域网的 networkSecurityConfig）；logcat 看 `inbox posted` 而不是只看 Mac 侧。
+- 不要做：只 curl 本机测 inbox 就当眼镜上报通了。
+
+## 2026-08-24 — 眼镜只上报原话，意图由 Cursor 判断
+
+- 场景：Vosk 把「开始看店」听成「开始开」，眼镜端口令门禁把请求丢掉。
+- 误判：要在眼镜上把口令认准才能继续。
+- 根因：小模型会吞字；业务判断应在电脑。眼镜 POST `http://<Mac>:18765/utterance` 写入 `.cursor/glass-inbox.json`。回控用 `am start --es cursor_cmd look|next|ask --es hud|text ...`。
+- 以后先做：放宽 VAD，任意非空识别都上报；不要在眼镜上 matches 口令。
+- 不要做：把「开始开」当识别失败丢掉。
+
+## 2026-08-24 — 「总是断开」是 LMK 杀进程，不是蓝牙掉了
+
+- 场景：HUD 在听或刚拍照，画面突然没了，日志里 Camera disconnect / bindSuccess=false 刷屏。
+- 误判：企业服务或蓝牙在反复断连。
+- 根因：`GlassSdk.bindSecurityService` 在无 `e` 固件上永远 `bindSuccess=false`，旧代码每 3s 重试，看起来像断开。真正把前台杀掉的是 `lowmemorykiller`：Vosk 模型占 swap ~160MB，再开 Camera2，2GB 眼镜把 `oom_score_adj 0` 的 TOP 进程杀掉。
+- 以后先做：绑定失败两次就停；拍照前停麦并 `release` Vosk 模型；不要看 Camera disconnect 当原因（那是进程死后的结果）。
+- 不要做：对着 bindSuccess=false 死循环重试。
+
+## 2026-08-24 — 镜腿长按不是按住 NOTIFICATION，而是 PROG_BLUE + 打开乐奇
+
+- 场景：用户长按功能键说话，应用没开始 ASR，反而去拍照，随后进程被杀。
+- 误判：长按会让 `keyCode=83` 保持 DOWN。
+- 根因：单击是 NOTIFICATION down/up 约 8ms，随后才出 `KEYCODE_PROG_BLUE`，`PhoneWindowManager.launchRokidAI`。Vosk + Camera2 同时开会把 2GB 眼镜打到 LMK。
+- 以后先做：前台自动听（VAD），不要用功能键长按当说话开关。拍照时先停麦。
+- 不要做：在 83 上做 550ms 长按检测。
+
+## 2026-08-24 — 企业 SDK 没有 ASR 时，眼镜可本地 Vosk 识别
+
+- 场景：`GlassSdk.isReady()` 为 false，官方 `startSpeech` / 离线口令不可用，仍要语音看店。
+- 误判：没有企业固件就不能用麦克风；必须等在线 ASR。
+- 根因：FAQ 明确 **不支持离线 ASR**，在线 ASR 要企业服务。但硬件是双麦，`AudioRecord` 的 `VOICE_RECOGNITION`（source=6）能开。本机无 TTS 引擎。自研路径：长按功能键录音 + Vosk `vosk-model-small-cn-0.22`（放到 app `files/asr/`）。`adb push` 直接进 `Android/data/.../files` 会 `secure_mkdirs` 失败，先推 `/data/local/tmp` 再 `cp`。单击仍是拍照，长按才是说话。
+- 以后先做：`pm grant RECORD_AUDIO`；确认模型目录有 `am/` `conf/`；logcat 看 `app asr recording` / `app asr text=`。
+- 不要做：把「口令没反应」只怪词条；不要用 `AudioRecord.read` 阻塞时只设标志而不 `record.stop()`。
+
+## 2026-08-24 — 企业 SDK 绑不上也能用 Camera2 自拍 JPEG
+
+- 场景：`GlassSdk.isReady()` 为 false，官方 `takePhoto` 不可用，仍要拍店招。
+- 误判：没有企业 SDK 就不能开相机；必须等 OTA 带 `e` 的固件。
+- 根因：`dumpsys media.camera` 有 1 个 Camera HAL 设备 0（Back，API2）。自有 App 申请 `CAMERA` 后可用标准 Camera2：dummy preview Surface + JPEG ImageReader，出 1280×720 JPEG（EXIF `Rokid` / `RG-glasses`）。RokidMirror（`com.rokid.glass.mirrorscan`）占用时会 `ERROR_CAMERA_IN_USE`。眼镜上看不见运行时权限框，要用 `pm grant ... CAMERA`。`mCurrentFocus=MockWindow` 时 `input keyevent` 进不了 Activity，广播 `com.rokid.glass3.action.button.CLICK` 仍能触发。
+- 以后先做：`dumpsys media.camera` 看 Active Camera Clients 是否为空；空则走 App Camera2。投屏占用就先停 mirrorscan。
+- 不要做：把「绑不上 Security 服务」当成「硬件没有相机」；不要在占用相机时反复重试。
+
+## 2026-08-24 — 这台眼镜是 `1.23.009`（无 `e`），企业 SDK 绑不上
+
+- 场景：要用 `glass3.open.sdk:2.2.0-E` 做拍照/TTS/口令，`bindSuccess = false`。
+- 误判：ADB `device` + 能装 APK = 企业 SDK 可用。
+- 根因：`ro.build.version.incremental = 1.23.009-20260725-150201`，版本号**不含 `e`**。启动器是 `com.rokid.os.sprite.launcher`。设备上没有 `com.rokid.security.system.server`。FAQ：版本号带 `e` 才是企业/工作系统；企业 SDK 与消费 SDK 完全不同。当前 SDK 推荐 OTA 是 `1.19.e006-20260806-150201` 及以上。
+- 以后先做：`adb shell getprop ro.build.version.incremental`，看有没有 `e`。没有就先走企业版 App OTA，不要继续调 `takePhoto`/口令。
+- 不要做：在无 `e` 的固件上把绑定失败当成业务 bug。
+
+## 2026-08-24 — 功能键是 KeyEvent，不是广播；Security 服务绑不上则口令全死
+
+- 场景：到店餐饮 HUD 在前台，用户说离线口令、单击功能键都没反应。
+- 误判：只监听 `com.rokid.glass3.action.button.CLICK` / `DeviceEventCode.BUTTON_ONE_CLICK`；口令注册失败只怪词条。
+- 根因：
+  1. 镜腿功能键实际打到 Activity 的 `KeyEvent`：`keyCode=83`（NOTIFICATION）随后 `66`（ENTER）。WindowManager 记 `Unhandled key`。广播和 SDK 按键监听都没到。
+  2. `GlassSdk.bindSecurityService` 打出 `bindSuccess = false`。本机没有包 `com.rokid.security.system.server`（SDK 绑的是 `SecurityCoreService`）。`DeviceEventListener`、离线口令、TTS、拍照都不会就绪。
+  3. 非有序广播里 `abortBroadcast()` 会抛异常，广播路径更死。
+  4. Demo 要求离线口令 3–5 个词、不要叠音。「看看这家店」这类词本身也不适合。
+- 以后先做：`logcat` 看 `Unhandled key` 的 `keyCode`；在 `HudActivity.dispatchKeyEvent` 里吃 ENTER/NOTIFICATION。SDK 未就绪时单击仍走本地 mock 出卡片。口令等 `glass sdk ready` 后再验。
+- 不要做：假定功能键一定走 Rokid 广播；SDK 没 ready 就怪用户没说话。
+
+## 2026-08-23 — ADB 通了但镜片没画面；HUD 字幕只能自己画
+
+- 场景：RokidMirror 无线投屏 + `192.168.0.124:5555` 已是 `device`，要控制眼镜并显示文字。
+- 误判：`am start` 设置页、音量键、滑动「已经成功」= 用户能看见。用 `screencap` 验证显示。
+- 根因：
+  1. 系统 `mWakefulness=Asleep`，display `OFF`。调试桥通，合成器没在出光。
+  2. 前台常为 `MockWindow`，和普通 `Activity` 窗口不是一层。
+  3. 默认显示 `FLAG_SECURE`，截图全黑，不能当反馈。
+  4. 乐奇字幕层无公开 API；`InstructService` 带 extras 不会出字。
+  5. `cmd notification post` / `am --es` 遇到空格会被 shell 截断。
+  6. 本机无 `media` 命令，不能用 `media volume`。
+  7. 亮度拉到 255 在光机上会刺眼；出厂约 `51`。
+- 以后先做：`KEYCODE_WAKEUP` → 确认 `Awake` + `state ON` → 再 `am start`。要一行字就开 `com.noel.glass.hud/.HudActivity`。结束恢复亮度 `51`。
+- 不要做：用截图判断成败；为了「看得见」把亮度拉满；把系统设置页当成乐奇 HUD。

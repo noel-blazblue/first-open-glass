@@ -10,6 +10,12 @@
 
 该目录即官方 Glass3 SDK Skill 包（含 `references/` 与 `scripts/`）。路径相对 Skill 目录，例如 `references/docs/terminal-sdk/getting-started/快速开始.md`。
 
+真机 ADB、RokidMirror、镜片看不见、HUD 文字、亮度等现场问题时，再读：
+
+`.cursor/skills/glass-dev/SKILL.md`
+
+并先查 `.cursor/skills/glass-dev/lessons.md`。新坑解决后按该 Skill 的模板追加 lesson。
+
 ## 仓库约定
 
 - 对用户用中文回复。

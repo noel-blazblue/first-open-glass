@@ -1,0 +1,14 @@
+.gradle/
+.idea/
+**/build/
+local.properties
+*.iml
+.DS_Store
+captures/
+*.apk
+!RokidMirrorScan*.apk
+.cxx/
+kotlin-js-store/
+tmp/
+.cursor/glass-inbox.json
+.cursor/glass-inbox.jsonl
