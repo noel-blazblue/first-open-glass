@@ -2,6 +2,7 @@
 .idea/
 **/build/
 local.properties
+.env
 *.iml
 .DS_Store
 captures/
@@ -12,3 +13,5 @@ kotlin-js-store/
 tmp/
 .cursor/glass-inbox.json
 .cursor/glass-inbox.jsonl
+.cursor/glass-ai.env
+.cursor/glass-ai-session.json

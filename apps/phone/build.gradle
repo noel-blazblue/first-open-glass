@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId "com.glass.dining.phone"
-        minSdk 26
+        minSdk 31
         targetSdk 34
         versionCode 1
         versionName "0.1.0"
@@ -34,13 +34,21 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion "1.5.14"
     }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+            pickFirsts += [
+                "**/libc++_shared.so",
+                "**/libvosk.so",
+            ]
+        }
+    }
 }
 
 dependencies {
     implementation project(":shared")
-    implementation("com.rokid.security:phone.sdk:2.2.0-E") {
-        exclude group: "org.slf4j"
-    }
+    implementation("com.rokid.cxr:client-l:1.0.3")
+    implementation "com.alphacephei:vosk-android:0.3.47"
     def composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation composeBom
     implementation "androidx.activity:activity-compose:1.9.2"
@@ -51,4 +59,20 @@ dependencies {
     implementation "androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4"
     implementation "androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.4"
     debugImplementation "androidx.compose.ui:ui-tooling"
+}
+
+afterEvaluate {
+    tasks.matching { it.name == "installDebug" }.configureEach {
+        doLast {
+            def envFile = rootProject.file(".env")
+            if (!envFile.exists()) {
+                logger.warn("workspace .env missing, skip pushing DeepSeek key")
+                return
+            }
+            exec {
+                commandLine "adb", "push", envFile.absolutePath,
+                    "/sdcard/Android/data/com.glass.dining.phone/files/ai.env"
+            }
+        }
+    }
 }

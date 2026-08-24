@@ -1,4 +1,6 @@
-# Glass3 SDK 文档
+# Glass3 SDK 文档（企业版对照）
+
+**本期产品走消费版 CXR-L**，见仓库根目录 [`demand.md`](../demand.md) 与 [`README.md`](../README.md)。下面这些整理对应 **Glass3 企业系统**（版本号含 `e`），消费固件上不能当接入手册。
 
 本目录收录 Rokid Glass3 企业版终端 SDK 的使用方法，整理自[官方文档](https://x-docs.rokid.com/docs/terminal-sdk/getting-started/快速开始.html)。
 

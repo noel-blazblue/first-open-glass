@@ -1,6 +1,43 @@
-# Field lessons
+## 2026-08-24 — 实时对话：手机开关控制眼镜麦，文字走 DeepSeek
 
-按时间倒序。稳定结论再提升到 `SKILL.md`。
+- 场景：点手机「对话」才收眼镜语音，送到 DeepSeek，回复上镜片并 TTS。
+- 误判：CXR-L 会把 PCM 变成文字；或 DeepSeek 能直接吃音频。
+- 根因：`startAudioStream(1)` 只给 16 kHz / mono / 16-bit PCM。对话走 DeepSeek `stream=true` SSE，镜片用四行各 16 字折行显示完整口语，不再用 JSON `hud` 截成一行。`customViewUpdate` 随 delta 刷新。
+- 以后先做：乐奇授权勾选麦克风；HUD 打开后再收声；密钥写工作区 `.env`。对话回复用 `HudCard.fromTalkText` 折四行。认店由 DeepSeek `look_store` tool 决定，不要再用口令 `isLookIntent` 拦截。
+- 不要做：没点「对话」就开眼镜麦；把 DeepSeek 密钥写进仓库或打进聊天；TTS 成功就当镜片已更新；把每句 ASR 都当看店。
+
+## 2026-08-24 — CXR-L 拍照是 takePhoto(宽, 高, 质量) + onImageReceived
+
+- 场景：看店要先出一张图，再 mock 认店，把绿字卡片推到镜片。
+- 误判：CustomView 会话不能拍照；或要自己在眼镜上开 Camera2。
+- 根因：`hasGlassPermission(CAMERA)` 看的是**本次进程**里 `requestAuthorization` 成功后的内存标记，不是磁盘 token。跳过授权页直接 `connect(savedToken)` 时该标记为 false，`takePhoto` 立刻 `No GlassPermission CAMERA`。
+- 以后先做：启动时向乐奇申请 MICROPHONE/CAMERA/MEDIA；`parseAuthorizationResult` 成功后再 connect。拍照前再查一次 `hasGlassPermission(CAMERA)`。
+- 以后先做：connect 时就 `setCXRImageCbk`；`takePhoto` 设 12s 超时；照片展示在手机 App，认店仍走 `DiningSession` mock。
+- 不要做：眼镜没连上或 takePhoto 失败时自动打开手机相机。失败就提示，让用户看手机状态。
+
+## 2026-08-24 — 手机端能接任意 LLM，CXR-L 不管大模型
+
+- 场景：要做眼镜 AI 问答。CXR-L 已通 Custom View。
+- 误判：等乐奇或企业 `toAiChat` 当手机端 AI；或 CXR-L 会把 PCM 变成文字。
+- 根因：`client-l:1.0.3` 只给连接、HUD、眼镜麦 PCM、拍照。大模型是手机 App 自己的 HTTP。本机企业 AI Chat 仍绑不上。密钥放 `Android/data/com.glass.dining.phone/files/ai.env`（与 `.cursor/glass-ai.env` 同格式）。当前代理返回 401 时链路仍通：HUD `customViewUpdate` + 手机 TTS 会走本地回退。
+- 以后先做：先证明 `loaded ai.env` 和 `LLM http=`；401 先换密钥，不要改连接代码。提问走手机输入或系统语音识别；眼镜麦下一步再接 `startAudioStream`。
+- 不要做：把密钥写进仓库或打进聊天。
+
+## 2026-08-24 — CXR-L connect 成功判定是双回调，不是 connect 返回值
+
+- 场景：token 已落盘，`CXRLink` 配 `CUSTOMVIEW` 后 `connect(token)`。
+- 误判：`connect` 返回 true 就算连上；或要等用户再点乐奇。
+- 根因：`connect` 只表示请求发出。就绪是 `onCXRLConnected(true)` 且 `onGlassBtConnected(true)`。随后 `customViewOpen` 成功会收到 `onCustomViewOpened`。乐奇需已连上这副眼镜。真机已确认镜片能看见 `已连接`。
+- 以后先做：Application 里单例 `CXRLink`；先 `configCXRSession` 再 `connect`；双回调后再开 HUD。logcat 看 `GlassDiningPhone` / `CXRLink`。用镜片确认，不要用截图。
+- 不要做：把 SDK 日志里的完整 token 贴进聊天（`CXRLink: connect by token:` 会打印明文）。
+
+## 2026-08-24 — 乐奇授权页能弹出，CXR-L token 能拿到
+
+- 场景：USB 连上小米 15 Pro（`e1109082` / `2410DPN6CC`），装 `com.glass.dining.phone`，调 `AuthorizationHelper.requestAuthorization`。
+- 误判：`AuthorizationHelper: cursor null` 和 `INTERACT_ACROSS_USERS` 会挡授权。
+- 根因：那两条日志不致命。乐奇 1.11.11（vercode 10110011）满足 ≥1.7.14。授权页是 `com.rokid.sprite.aiapp/.kuikly.KuiklyRenderActivity`。同意后 token 约 32 字节，写入 `getExternalFilesDir()/cxr-token.txt`。
+- 以后先做：`adb devices` 确认是手机再 `installDebug`；Manifest 加 `<queries>` 查 `com.rokid.sprite.aiapp`；logcat 看 `cxr token len=`，不要把完整 token 打进聊天。
+- 不要做：把 `cursor null` 当失败停手；线插眼镜时对手机装 APK。
 
 ## 2026-08-24 — AI Chat 是问答会话，拍照只是工具
 

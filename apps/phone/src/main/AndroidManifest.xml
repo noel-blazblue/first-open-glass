@@ -34,6 +34,16 @@
         android:name="android.hardware.camera"
         android:required="false" />
 
+    <queries>
+        <package android:name="com.rokid.sprite.aiapp" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+    </queries>
+
     <application
         android:name=".PhoneDiningApp"
         android:allowBackup="false"
@@ -41,10 +51,13 @@
         android:label="到店餐饮陪伴"
         android:supportsRtl="true"
         android:theme="@style/Theme.DiningPhone"
-        tools:replace="android:allowBackup">
+        android:usesCleartextTraffic="true"
+        android:extractNativeLibs="true"
+        tools:replace="android:allowBackup,android:extractNativeLibs">
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -1,12 +1,11 @@
 package com.glass.dining.phone
 
-import android.annotation.SuppressLint
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -26,16 +24,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.glass.dining.shared.hud.GlassesHudPreview
 import com.glass.dining.shared.hud.HudColors
-import com.glass.dining.shared.hud.StoreHud
 import com.glass.dining.shared.model.Store
 
 private val Panel = Color(0xFF1A1A1A)
@@ -54,6 +52,22 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
     ) {
         Text("到店餐饮", color = HudColors.green, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(state.status, color = TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+        if (state.talking && state.asrPartial.isNotBlank()) {
+            Text(
+                "识别中：${state.asrPartial}",
+                color = HudColors.green,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        Text(
+            "点「对话」后才接收眼镜麦克风，送到 DeepSeek；回复显示在镜片并语音播报。看店识别只用眼镜拍照。",
+            color = TextDim,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        Spacer(Modifier.height(12.dp))
+        TalkButton(talking = state.talking) { viewModel.toggleTalk() }
         Spacer(Modifier.height(12.dp))
 
         Text("商圈", color = TextMain, fontSize = 14.sp)
@@ -70,40 +84,38 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
         }
 
         Spacer(Modifier.height(16.dp))
-        Text("眼镜 HUD 预览", color = TextMain, fontSize = 14.sp)
-        Box(
+        Text("镜片预览", color = TextMain, fontSize = 14.sp)
+        GlassesHudPreview(
+            card = state.card,
             modifier = Modifier
                 .padding(top = 8.dp)
                 .fillMaxWidth()
-                .height(320.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(240.dp)
-                    .height(320.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .border(1.dp, HudColors.green.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(480.dp)
-                        .height(640.dp)
-                        .graphicsLayer {
-                            scaleX = 0.5f
-                            scaleY = 0.5f
-                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
-                        },
-                ) {
-                    StoreHud(state.hud, Modifier.fillMaxSize())
-                }
-            }
-        }
+                .height(200.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .border(1.dp, HudColors.green.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
+        )
 
         Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ActionButton("模拟看店识别") { viewModel.look() }
-            ActionButton("下一家") { viewModel.next() }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ActionButton("看店识别", Modifier.weight(1f)) { viewModel.look() }
+            ActionButton("下一家", Modifier.weight(1f)) { viewModel.next() }
+        }
+        state.photo?.let { bitmap ->
+            Spacer(Modifier.height(12.dp))
+            Text("本次照片", color = TextMain, fontSize = 14.sp)
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "店招照片",
+                modifier = Modifier
+                    .padding(top = 8.dp)
+                    .fillMaxWidth()
+                    .height(180.dp)
+                    .clip(RoundedCornerShape(12.dp)),
+                contentScale = ContentScale.Crop,
+            )
         }
         Spacer(Modifier.height(8.dp))
         Row(
@@ -128,7 +140,13 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
             ),
         )
         Spacer(Modifier.height(8.dp))
-        ActionButton("提问") { viewModel.ask(state.question) }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ActionButton("提问", Modifier.weight(1f)) { viewModel.ask(state.question) }
+            ActionButton("对着手机说话", Modifier.weight(1f)) { viewModel.startVoice() }
+        }
 
         state.lastQa?.let {
             Spacer(Modifier.height(8.dp))
@@ -148,21 +166,6 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
                     viewModel.look(store.id)
                 }
             }
-        }
-
-        Spacer(Modifier.height(16.dp))
-        Text("连接眼镜（可选）", color = TextMain, fontSize = 14.sp)
-        Spacer(Modifier.height(8.dp))
-        ActionButton("扫描 Glass3") { viewModel.scanGlasses() }
-        state.devices.forEach { device ->
-            val label = deviceLabel(device)
-            Text(
-                text = "连接 $label",
-                color = HudColors.green,
-                modifier = Modifier
-                    .padding(top = 8.dp)
-                    .clickable { viewModel.connect(device) },
-            )
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -206,16 +209,32 @@ private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ActionButton(label: String, onClick: () -> Unit) {
+private fun TalkButton(talking: Boolean, onClick: () -> Unit) {
     Button(
         onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (talking) Color(0xFF8B1E1E) else Color(0xFF145C38),
+        ),
+    ) {
+        Text(
+            if (talking) "结束对话" else "对话",
+            color = Color.White,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
+private fun ActionButton(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        modifier = modifier,
         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF145C38)),
     ) {
         Text(label, color = Color.White)
     }
-}
-
-@SuppressLint("MissingPermission")
-private fun deviceLabel(device: android.bluetooth.BluetoothDevice): String {
-    return device.name ?: device.address
 }

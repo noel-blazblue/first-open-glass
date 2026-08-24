@@ -11,8 +11,9 @@ description: >-
 
 # Glass Dev Playbook
 
-官方 API、依赖、Demo 走 [rokid-glass3-sdk](../rokid-glass3-sdk/SKILL.md)。  
-本 Skill 管**现场开发**：真机、ADB、显示通路、验证方法，以及把踩坑写成可复用经验。
+消费版主路径是手机 **CXR-L** + 乐奇 CustomView，现场坑记在 [lessons.md](lessons.md)。  
+企业版 `GlassSdk` 文档在 [rokid-glass3-sdk](../rokid-glass3-sdk/SKILL.md)，只作对照，不要往消费固件上接。  
+本 Skill 管**现场开发**：真机、ADB、显示通路、CXR 连接、验证方法，以及把踩坑写成可复用经验。
 
 ## 何时用
 
@@ -102,8 +103,9 @@ adb shell am start -n com.noel.glass.hud/.HudActivity -f 0x10000000 --es text "�
 
 | 问题 | 去哪 |
 | --- | --- |
-| Gradle、`GlassSdk`、蓝牙协议、API 名 | `rokid-glass3-sdk` |
-| 真机看不见、ADB、HUD、投屏、亮度、临时 APK | 本 Skill + `lessons.md` |
+| 消费版 CXR-L、乐奇授权、CustomView | 本 Skill + `lessons.md` + [open.rokid.com/sdk](https://open.rokid.com/sdk) |
+| 企业版 `GlassSdk` / `PSecuritySDK`（仅对照） | `rokid-glass3-sdk` |
+| 真机看不见、ADB、HUD、投屏、亮度 | 本 Skill + `lessons.md` |
 | 文档没有的系统私有能力 | 写明「文档没有」，记入 lessons，不要当正式 API |
 
 ## 如何积累经验
