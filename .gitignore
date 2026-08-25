@@ -14,4 +14,5 @@ tmp/
 .cursor/glass-inbox.json
 .cursor/glass-inbox.jsonl
 .cursor/glass-ai.env
+apps/phone/src/main/assets/asr/*.zip
 .cursor/glass-ai-session.json

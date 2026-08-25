@@ -32,12 +32,14 @@ object CxrLinkHost {
 
     var onStatus: ((String) -> Unit)? = null
     var onAudioPcm: ((ByteArray) -> Unit)? = null
+    var onHudOpened: (() -> Unit)? = null
 
     private const val AUDIO_CODEC_PCM = 1
     @Volatile private var wantAudio: Boolean = false
     @Volatile private var audioPackets: Int = 0
 
     private val main = Handler(Looper.getMainLooper())
+    private val reopenHud = Runnable { openHudIfReady() }
     @Volatile private var connecting: Boolean = false
     @Volatile private var lastCard: HudCard = HudCard.idle()
     @Volatile private var photoWaiter: ((ByteArray?, String?) -> Unit)? = null
@@ -143,6 +145,7 @@ object CxrLinkHost {
             if (wantAudio) {
                 startGlassMic()
             }
+            main.post { onHudOpened?.invoke() }
         }
 
         override fun onCustomViewUpdated() {
@@ -152,6 +155,9 @@ object CxrLinkHost {
         override fun onCustomViewClosed() {
             hudOpened = false
             Log.i(TAG, "onCustomViewClosed")
+            onStatus?.invoke("镜片 HUD 被关闭，正在重开")
+            main.removeCallbacks(reopenHud)
+            main.postDelayed(reopenHud, 400)
         }
 
         override fun onCustomViewIconsSent() {
@@ -168,6 +174,7 @@ object CxrLinkHost {
     fun connect(app: Application, token: String): String {
         if (token.isBlank()) return "token 为空，无法连接"
         if (cxrConnected && glassBtConnected && sharedLink != null) {
+            main.post { openHudIfReady() }
             return "CXR 已连接"
         }
         if (connecting && sharedLink != null) {
@@ -343,7 +350,14 @@ object CxrLinkHost {
     private fun openHudIfReady() {
         val link = sharedLink ?: return
         if (!cxrConnected || !glassBtConnected || hudOpened) return
-        if (link.customViewIsOpen()) return
+        val sdkOpen = try {
+            link.customViewIsOpen()
+        } catch (_: Exception) {
+            false
+        }
+        if (sdkOpen) {
+            Log.i(TAG, "customViewIsOpen=true after close, still calling customViewOpen")
+        }
         val ok = try {
             link.customViewOpen(viewJson(lastCard))
         } catch (error: Exception) {
@@ -351,7 +365,7 @@ object CxrLinkHost {
             onStatus?.invoke("打开 HUD 异常: ${error.message}")
             return
         }
-        Log.i(TAG, "customViewOpen ok=$ok")
+        Log.i(TAG, "customViewOpen ok=$ok sdkOpen=$sdkOpen")
         if (!ok) {
             onStatus?.invoke("眼镜已连接，打开 HUD 失败")
         }
@@ -368,7 +382,9 @@ object CxrLinkHost {
                     .put("layout_width", "match_parent")
                     .put("layout_height", "match_parent")
                     .put("orientation", "vertical")
-                    .put("gravity", "center")
+                    .put("gravity", "center_horizontal")
+                    .put("marginTop", "160dp")
+                    .put("marginBottom", "80dp")
                     .put("backgroundColor", "#FF000000"),
             )
             .put(

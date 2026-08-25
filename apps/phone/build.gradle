@@ -43,8 +43,23 @@ android {
             ]
         }
     }
+    androidResources {
+        noCompress += "zip"
+    }
 }
 
+def voskZip = file("$projectDir/src/main/assets/asr/vosk-model-small-cn-0.22.zip")
+tasks.register("fetchVoskModel") {
+    outputs.file voskZip
+    doLast {
+        if (voskZip.exists() && voskZip.length() > 1_000_000) {
+            return
+        }
+        voskZip.parentFile.mkdirs()
+        logger.lifecycle("Downloading Vosk model to ${voskZip}")
+        ant.get(src: "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip", dest: voskZip)
+    }
+}
 dependencies {
     implementation project(":shared")
     implementation("com.rokid.cxr:client-l:1.0.3")
@@ -62,6 +77,7 @@ dependencies {
 }
 
 afterEvaluate {
+    tasks.named("preBuild").configure { dependsOn("fetchVoskModel") }
     tasks.matching { it.name == "installDebug" }.configureEach {
         doLast {
             def envFile = rootProject.file(".env")

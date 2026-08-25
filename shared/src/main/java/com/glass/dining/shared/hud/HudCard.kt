@@ -28,7 +28,7 @@ data class HudCard(
         fun fromTalkText(text: String): HudCard {
             val lines = wrap(text, LINE, 4)
             return HudCard(
-                title = lines.getOrElse(0) { "对话中" },
+                title = lines.getOrElse(0) { "听" },
                 meta = lines.getOrElse(1) { "" },
                 wait = lines.getOrElse(2) { "" },
                 extra = lines.getOrElse(3) { "" },
@@ -36,7 +36,7 @@ data class HudCard(
         }
 
         fun wrap(text: String, width: Int, maxLines: Int): List<String> {
-            val clean = text.replace(Regex("[\\r\\n]+"), "").trim().ifBlank { return listOf("对话中") }
+            val clean = text.replace(Regex("[\\r\\n]+"), "").trim().ifBlank { return listOf("听") }
             val parts = clean.chunked(width)
             if (parts.size <= maxLines) return parts
             val kept = parts.take(maxLines).toMutableList()
@@ -44,6 +44,7 @@ data class HudCard(
             kept[kept.lastIndex] = if (last.length <= 1) "…" else last.dropLast(1) + "…"
             return kept
         }
+
         fun idle(): HudCard {
             return HudCard(
                 title = "到店餐饮",
@@ -52,38 +53,58 @@ data class HudCard(
             ).clipped()
         }
 
-        fun listening(current: HudCard? = null): HudCard {
-            return talkListening()
+        fun listening(match: MatchResult? = null, heard: String = ""): HudCard {
+            if (match != null) {
+                val card = fromStore(match.store)
+                return if (heard.isBlank()) {
+                    card
+                } else {
+                    card.copy(extra = heard.takeLast(LINE)).clipped()
+                }
+            }
+            return HudCard(
+                title = "听",
+                meta = heard.takeLast(LINE).ifBlank { "对着眼镜说话" },
+                wait = if (heard.isBlank()) "我在听" else "",
+                extra = "",
+            ).clipped()
+        }
+
+        fun thinking(match: MatchResult? = null, heard: String = ""): HudCard {
+            if (match != null) {
+                return fromStore(match.store).copy(extra = "思考中").clipped()
+            }
+            return HudCard(
+                title = "思考中",
+                meta = heard.take(LINE),
+                wait = "",
+                extra = "",
+            ).clipped()
+        }
+
+        fun answering(match: MatchResult?, partial: String, done: Boolean): HudCard {
+            if (match != null) {
+                val card = fromStore(match.store)
+                return if (done) card else card.copy(extra = overlayLine(partial)).clipped()
+            }
+            return fromTalkText(partial)
         }
 
         fun talkListening(): HudCard {
-            return HudCard(
-                title = "对话中",
-                meta = "对着眼镜说话",
-                wait = "我在听",
-                extra = "",
-            ).clipped()
+            return listening()
         }
 
         fun talkThinking(heard: String): HudCard {
-            return HudCard(
-                title = "对话中",
-                meta = heard,
-                wait = "思考中",
-                extra = "",
-            ).clipped()
+            return thinking(heard = heard)
         }
 
         fun talkReply(heard: String, hud: String, speak: String): HudCard {
             return fromTalkText(speak.ifBlank { hud })
         }
 
-        fun thinking(current: HudCard? = null): HudCard {
-            return (current ?: idle()).withExtra("思考中")
-        }
-
-        fun shooting(current: HudCard? = null): HudCard {
-            return (current ?: idle()).copy(
+        fun shooting(match: MatchResult? = null, current: HudCard? = null): HudCard {
+            val base = match?.let { fromStore(it.store) } ?: (current ?: idle())
+            return base.copy(
                 wait = "正在拍照识别",
                 extra = "请看向店招",
             ).clipped()
@@ -108,6 +129,10 @@ data class HudCard(
                 wait = wait,
                 extra = deal,
             ).clipped()
+        }
+
+        private fun overlayLine(text: String): String {
+            return text.replace(Regex("[\\r\\n]+"), "").trim().takeLast(LINE)
         }
     }
 }

@@ -14,6 +14,7 @@ object PhoneTts {
     @Volatile private var pending: String? = null
     @Volatile var speaking: Boolean = false
         private set
+    var onIdle: (() -> Unit)? = null
     private val inflight = AtomicInteger(0)
     private var seq: Int = 0
 
@@ -30,24 +31,15 @@ object PhoneTts {
                 engine?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
                         speaking = true
-                        GlassAsr.muted = true
                     }
 
                     override fun onDone(utteranceId: String?) {
-                        if (inflight.decrementAndGet() <= 0) {
-                            inflight.set(0)
-                            speaking = false
-                            GlassAsr.muted = false
-                        }
+                        markIdleIfClear()
                     }
 
                     @Deprecated("Deprecated in Java")
                     override fun onError(utteranceId: String?) {
-                        if (inflight.decrementAndGet() <= 0) {
-                            inflight.set(0)
-                            speaking = false
-                            GlassAsr.muted = false
-                        }
+                        markIdleIfClear()
                     }
                 })
                 Log.i(TAG, "phone TTS ready")
@@ -76,7 +68,6 @@ object PhoneTts {
             return
         }
         speaking = true
-        GlassAsr.muted = true
         if (flush) {
             inflight.set(1)
         } else {
@@ -87,10 +78,19 @@ object PhoneTts {
         engine.speak(spoken, mode, null, "dining-ai-$seq")
     }
 
+    private fun markIdleIfClear() {
+        if (inflight.decrementAndGet() > 0) return
+        inflight.set(0)
+        speaking = false
+        GlassAsr.muted = false
+        onIdle?.invoke()
+    }
+
     fun stop() {
         tts?.stop()
         inflight.set(0)
         speaking = false
+        GlassAsr.muted = false
     }
 
     fun shutdown() {

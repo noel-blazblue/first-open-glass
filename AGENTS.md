@@ -30,5 +30,5 @@ https://open.rokid.com/sdk
 ## 典型流程
 
 1. 先确认眼镜系统版本不含 `e`，手机已装乐奇并连上眼镜。
-2. 改功能只动 `apps/phone` 与 `shared`，用 CustomView 更新绿字。
-3. 连接失败先查 `lessons.md`（双回调、token、乐奇版本），再改代码。
+2. 连接失败先查 `lessons.md`（双回调、token、乐奇版本），再改代码。
+3. 改动apps/phone 代码后，必须安装到手机上。

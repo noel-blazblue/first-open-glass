@@ -61,7 +61,7 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
             )
         }
         Text(
-            "点「对话」后才接收眼镜麦克风，送到 DeepSeek；回复显示在镜片并语音播报。看店识别只用眼镜拍照。",
+            "镜片 HUD 打开后会自动听眼镜语音。点「结束对话」暂停。认店后门店卡留在镜片上，可以接着问排队、团购。",
             color = TextDim,
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp),
@@ -220,7 +220,7 @@ private fun TalkButton(talking: Boolean, onClick: () -> Unit) {
         ),
     ) {
         Text(
-            if (talking) "结束对话" else "对话",
+            if (talking) "结束对话" else "开始听",
             color = Color.White,
             fontSize = 18.sp,
             fontWeight = FontWeight.Bold,

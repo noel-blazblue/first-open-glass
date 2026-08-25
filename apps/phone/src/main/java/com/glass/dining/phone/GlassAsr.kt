@@ -9,10 +9,12 @@ import org.vosk.LibVosk
 import org.vosk.LogLevel
 import org.vosk.Model
 import org.vosk.Recognizer
+import java.io.BufferedInputStream
 import java.io.File
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.ZipInputStream
 import kotlin.math.max
 import kotlin.math.sqrt
 
@@ -22,6 +24,7 @@ object GlassAsr {
     private const val MAX_UTTER_MS = 8_000L
     private const val MIN_UTTER_MS = 1_200L
     private const val SILENCE_FRAMES = 10
+    private const val ASSET_ZIP = "asr/vosk-model-small-cn-0.22.zip"
 
     var onPartial: ((String) -> Unit)? = null
     var onUtterance: ((String) -> Unit)? = null
@@ -36,8 +39,15 @@ object GlassAsr {
     @Volatile private var queue: LinkedBlockingQueue<ByteArray>? = null
 
     fun modelDir(context: Context): File {
-        val root = context.getExternalFilesDir(null) ?: context.filesDir
-        return File(root, "asr/vosk-model-small-cn-0.22")
+        val candidates = listOfNotNull(
+            File(context.filesDir, "asr/vosk-model-small-cn-0.22"),
+            context.getExternalFilesDir(null)?.let { File(it, "asr/vosk-model-small-cn-0.22") },
+        )
+        return candidates.firstOrNull(::isModelDir) ?: candidates.first()
+    }
+
+    private fun isModelDir(dir: File): Boolean {
+        return File(dir, "am").isDirectory && File(dir, "conf").isDirectory
     }
 
     fun preload(context: Context) {
@@ -69,7 +79,7 @@ object GlassAsr {
     }
 
     fun feed(pcm: ByteArray) {
-        if (!running.get() || muted || PhoneTts.speaking) return
+        if (!running.get() || muted) return
         if (pcm.isEmpty()) return
         val copy = pcm.copyOf()
         val q = queue ?: return
@@ -93,7 +103,7 @@ object GlassAsr {
             var pending = ByteArray(0)
             while (running.get()) {
                 val chunk = incoming.poll(80, TimeUnit.MILLISECONDS) ?: continue
-                if (muted || PhoneTts.speaking) {
+                if (muted) {
                     if (inSpeech) {
                         inSpeech = false
                         rec.reset()
@@ -110,11 +120,22 @@ object GlassAsr {
                     pending = ByteArray(0)
                 }
                 val level = rms(shorts)
-                val threshold = max(noise * 1.55, 180.0)
+                val ttsPlaying = PhoneTts.speaking
+                val threshold = if (ttsPlaying) {
+                    max(noise * 2.4, 420.0)
+                } else {
+                    max(noise * 1.55, 180.0)
+                }
                 if (!inSpeech) {
                     if (level < 20) continue
-                    noise = noise * 0.94 + level * 0.06
+                    if (!ttsPlaying) {
+                        noise = noise * 0.94 + level * 0.06
+                    }
                     if (level < threshold) continue
+                    if (ttsPlaying) {
+                        Log.i(TAG, "glass asr barge-in rms=${level.toInt()} thr=${threshold.toInt()}")
+                        main.post { PhoneTts.stop() }
+                    }
                     inSpeech = true
                     silence = 0
                     bestPartial = ""
@@ -166,12 +187,16 @@ object GlassAsr {
     private fun ensureModel(context: Context): String? {
         synchronized(modelLock) {
             if (model != null) return null
-            val dir = modelDir(context)
-            val am = File(dir, "am")
-            val conf = File(dir, "conf")
-            if (!am.isDirectory && !conf.isDirectory) {
-                return "没有语音模型。请把 vosk-model-small-cn-0.22 放到应用 asr 目录。"
+            var dir = modelDir(context)
+            if (!isModelDir(dir)) {
+                val unpackError = unpackBundledModel(context)
+                dir = modelDir(context)
+                if (!isModelDir(dir)) {
+                    Log.w(TAG, "glass asr missing model dir=${dir.absolutePath} unpack=$unpackError")
+                    return "正在准备语音模型失败，请检查网络后重装应用。"
+                }
             }
+            Log.i(TAG, "glass asr using ${dir.absolutePath}")
             return try {
                 LibVosk.setLogLevel(LogLevel.WARNINGS)
                 model = Model(dir.absolutePath)
@@ -180,6 +205,43 @@ object GlassAsr {
                 Log.w(TAG, "load vosk model failed", error)
                 "语音模型加载失败"
             }
+        }
+    }
+
+    private fun unpackBundledModel(context: Context): String? {
+        val destRoot = File(context.filesDir, "asr")
+        destRoot.mkdirs()
+        return try {
+            context.assets.open(ASSET_ZIP).use { input ->
+                ZipInputStream(BufferedInputStream(input)).use { zip ->
+                    while (true) {
+                        val entry = zip.nextEntry ?: break
+                        val name = entry.name
+                        if (name.contains("..")) {
+                            zip.closeEntry()
+                            continue
+                        }
+                        val out = File(destRoot, name)
+                        if (entry.isDirectory) {
+                            out.mkdirs()
+                        } else {
+                            out.parentFile?.mkdirs()
+                            out.outputStream().use { dest -> zip.copyTo(dest) }
+                        }
+                        zip.closeEntry()
+                    }
+                }
+            }
+            val unpacked = File(destRoot, "vosk-model-small-cn-0.22")
+            if (isModelDir(unpacked)) {
+                Log.i(TAG, "glass asr unpacked ${unpacked.absolutePath}")
+                null
+            } else {
+                "bundled zip missing am/conf"
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "unpack vosk failed", error)
+            error.message ?: "unpack failed"
         }
     }
 

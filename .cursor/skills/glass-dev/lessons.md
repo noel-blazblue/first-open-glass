@@ -1,3 +1,19 @@
+## 2026-08-25 — Vosk 模型打进 APK，adb push 到 Android/data 看不见
+
+- 场景：重装后点对话提示没有语音模型；`adb ls` 却能看到 `asr/vosk-model-small-cn-0.22`。
+- 误判：没推上，或 CXR 会转写。
+- 根因：CXR-L 只给 PCM。`adb push` 到 `Android/data/.../files` 属主是 `shell`，MIUI 下 App 看不见。
+- 以后先做：模型 zip 进 `assets/asr/`（构建时 `fetchVoskModel`），首次解压到 `filesDir/asr/`。`GlassAsr` 先查内部目录。
+- 不要做：只 `adb push` 到 `Android/data/.../files` 就当 App 能加载。
+
+## 2026-08-25 — 乐奇 AI 退出会关掉 CustomView，绿字不回来
+
+- 场景：镜片绿字在，用户用乐奇本机说话；之后眼镜喇叭恢复，到餐 HUD 消失。点「对话」提示「镜片 HUD 还没打开」。
+- 误判：没声是到餐 TTS 没走 A2DP；UI 没了是 CXR 断了。
+- 根因：乐奇 `onAiExit` / `Sys_Msg_Tts_Stop` 会 `onCustomViewClosed`。到餐只把 `hudOpened=false`，不重开。`openHudIfReady` 见 SDK `customViewIsOpen()==true` 就直接 return，所以点对话也打不开。眼镜本机喇叭不靠手机 App；CustomView 会话会占显示（有时也影响本机播报）。
+- 以后先做：`onCustomViewClosed` 后延迟重开 HUD；`hudOpened=false` 时即使 SDK 仍报 open 也要再 `customViewOpen`。用镜片看绿字，不要用截图。
+- 不要做：把「眼镜没声」先当成手机 TTS 路由问题；不要用企业版 TTS 接口救消费版喇叭。
+
 ## 2026-08-24 — 实时对话：手机开关控制眼镜麦，文字走 DeepSeek
 
 - 场景：点手机「对话」才收眼镜语音，送到 DeepSeek，回复上镜片并 TTS。

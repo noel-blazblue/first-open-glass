@@ -27,11 +27,10 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.CRC32
 
 data class PhoneUiState(
-    val status: String = "点「对话」才接收眼镜语音。看店识别会用眼镜拍照。",
+    val status: String = "连上眼镜后会自动听。点按钮可暂停。",
     val scenes: List<Scene> = MockCatalog.scenes,
     val sceneId: String = MockCatalog.defaultSceneId,
     val card: HudCard = HudCard.idle(),
@@ -56,7 +55,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var lastHudAt: Long = 0
     @Volatile private var spokenChars: Int = 0
-    private val lookedThisTurn = AtomicBoolean(false)
+    @Volatile private var talkPausedByUser: Boolean = false
 
     init {
         CxrLinkHost.onStatus = { line ->
@@ -65,13 +64,13 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         CxrLinkHost.onAudioPcm = { pcm -> GlassAsr.feed(pcm) }
-        GlassAsr.onPartial = { text ->
-            _ui.update { it.copy(asrPartial = text, status = "听到：$text") }
-        }
+        GlassAsr.onPartial = { text -> onAsrPartial(text) }
         GlassAsr.onUtterance = { text -> onHeard(text) }
         GlassAsr.onError = { message -> setStatus(message) }
+        PhoneTts.onIdle = { onTalkIdle() }
+        CxrLinkHost.onHudOpened = { onHudOpened() }
         val model = PhoneAi.statusLine
-        _ui.update { it.copy(status = "点「对话」才接收眼镜语音。$model") }
+        _ui.update { it.copy(status = "连上眼镜后会自动听。$model") }
     }
 
     override fun onCleared() {
@@ -80,6 +79,8 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         GlassAsr.onPartial = null
         GlassAsr.onUtterance = null
         GlassAsr.onError = null
+        PhoneTts.onIdle = null
+        CxrLinkHost.onHudOpened = null
         super.onCleared()
     }
 
@@ -89,8 +90,10 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleTalk() {
         if (_ui.value.talking) {
+            talkPausedByUser = true
             stopTalk(speak = true)
         } else {
+            talkPausedByUser = false
             startTalk()
         }
     }
@@ -130,12 +133,8 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         if (asking) return
         asking = true
         GlassAsr.muted = true
+        val thinking = HudCard.thinking(currentMatch(), text)
         _ui.update { state ->
-            val thinking = if (state.talking) {
-                HudCard.talkThinking(text)
-            } else {
-                HudCard.thinking(state.card)
-            }
             CxrLinkHost.showCard(thinking)
             state.copy(
                 question = text,
@@ -145,27 +144,35 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 asrPartial = "",
             )
         }
-        val storeHint = session.lastMatch?.store?.let { "${it.shortName} ${it.name}" }
+        val storeHint = currentMatch()?.store?.let { "${it.shortName} ${it.name}" }
         spokenChars = 0
         lastHudAt = 0
-        lookedThisTurn.set(false)
         viewModelScope.launch {
-            val reply = if (PhoneAi.ready) {
-                withContext(Dispatchers.IO) {
-                    PhoneAi.ask(
-                        text,
-                        storeHint,
-                        onDelta = { partial -> main.post { onStreamDelta(text, partial, done = false) } },
-                        onLook = { lookStoreForAi() },
-                    )
+            try {
+                val reply = if (PhoneAi.ready) {
+                    withContext(Dispatchers.IO) {
+                        PhoneAi.ask(
+                            text,
+                            storeHint,
+                            onDelta = { partial -> main.post { onStreamDelta(text, partial, done = false) } },
+                            onLook = { lookStoreForAi() },
+                        )
+                    }
+                } else {
+                    val local = session.ask(text)
+                    streamLocal(local.answer)
+                    AiReply(local.answer, local.answer, false)
                 }
-            } else {
-                val local = session.ask(text)
-                streamLocal(local.answer)
-                AiReply(local.answer, local.answer, false)
+                onStreamDelta(text, reply.speak, done = true)
+            } finally {
+                asking = false
+                if (_ui.value.talking) {
+                    GlassAsr.muted = false
+                    if (!PhoneTts.speaking) {
+                        showListeningCard()
+                    }
+                }
             }
-            onStreamDelta(text, reply.speak, done = true)
-            asking = false
         }
     }
 
@@ -182,6 +189,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun startTalk() {
+        if (_ui.value.talking) return
         if (!CxrLinkHost.canTakePhoto()) {
             setStatus("眼镜未连上，无法接收眼镜语音。请先用乐奇连上这副眼镜。")
             return
@@ -206,8 +214,9 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             GlassAsr.muted = false
+            val listening = HudCard.listening(currentMatch())
+            CxrLinkHost.showCard(listening)
             val mic = CxrLinkHost.startGlassMic()
-            val listening = HudCard.talkListening()
             _ui.update {
                 it.copy(
                     talking = true,
@@ -216,8 +225,6 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                     asrPartial = "",
                 )
             }
-            CxrLinkHost.showCard(listening)
-            PhoneTts.speak("我在听")
             Log.i(TAG, "talk on: $mic")
         }
     }
@@ -227,8 +234,9 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         CxrLinkHost.stopGlassMic()
         GlassAsr.stop()
         GlassAsr.muted = true
+        val card = currentMatch()?.let { HudCard.fromMatch(it) } ?: HudCard.idle()
+        _ui.update { it.copy(talking = false) }
         PhoneTts.stop()
-        val card = _ui.value.match?.let { HudCard.fromMatch(it) } ?: HudCard.idle()
         _ui.update {
             it.copy(
                 talking = false,
@@ -245,7 +253,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun startCapture() {
-        val shooting = HudCard.shooting(_ui.value.card)
+        val shooting = HudCard.shooting(currentMatch(), _ui.value.card)
         _ui.update {
             it.copy(
                 recognizing = true,
@@ -284,8 +292,10 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     private fun failCapture(reason: String) {
         Log.w(TAG, "capture failed: $reason")
         asking = false
-        GlassAsr.muted = false
-        val card = _ui.value.card.withExtra("拍照失败")
+        if (_ui.value.talking && !PhoneTts.speaking) {
+            GlassAsr.muted = false
+        }
+        val card = failCard("拍照失败")
         _ui.update {
             it.copy(
                 recognizing = false,
@@ -360,7 +370,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun lookStoreForAi(): String {
         main.post {
-            val shooting = HudCard.shooting(_ui.value.card)
+            val shooting = HudCard.shooting(currentMatch(), _ui.value.card)
             _ui.update {
                 it.copy(
                     recognizing = true,
@@ -370,7 +380,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             CxrLinkHost.showCard(shooting)
-            PhoneTts.speak("我看一下这家店")
+            PhoneTts.speak("我看一下")
         }
         if (!CxrLinkHost.canTakePhoto()) {
             return failLook("眼镜未连上，无法拍照")
@@ -398,7 +408,6 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 .toString()
         }
         val result = session.look(visionHint = hint)
-        lookedThisTurn.set(true)
         val card = HudCard.fromMatch(result)
         main.post {
             _ui.update {
@@ -419,7 +428,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     private fun failLook(reason: String): String {
         Log.w(TAG, "look_store failed: $reason")
         main.post {
-            val card = _ui.value.card.withExtra("拍照失败")
+            val card = failCard("拍照失败")
             _ui.update {
                 it.copy(
                     recognizing = false,
@@ -481,16 +490,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         lastHudAt = now
-        val match = session.lastMatch
-        val card = if (lookedThisTurn.get() && match != null) {
-            if (done) {
-                HudCard.fromMatch(match)
-            } else {
-                HudCard.fromMatch(match).copy(extra = partial.takeLast(HudCard.LINE)).clipped()
-            }
-        } else {
-            HudCard.fromTalkText(partial)
-        }
+        val card = HudCard.answering(currentMatch(), partial, done)
         _ui.update {
             it.copy(
                 card = card,
@@ -500,6 +500,48 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }
         CxrLinkHost.showCard(card)
         speakNewSentences(partial, done)
+    }
+
+    private fun currentMatch(): MatchResult? {
+        return _ui.value.match ?: session.lastMatch
+    }
+
+    private fun failCard(line: String): HudCard {
+        val match = currentMatch()
+        return if (match != null) {
+            HudCard.fromMatch(match).copy(extra = line.take(HudCard.LINE)).clipped()
+        } else {
+            _ui.value.card.withExtra(line)
+        }
+    }
+
+    private fun showListeningCard() {
+        if (!_ui.value.talking || asking || _ui.value.recognizing) return
+        val card = HudCard.listening(currentMatch())
+        _ui.update { it.copy(card = card) }
+        CxrLinkHost.showCard(card)
+    }
+
+    private fun onHudOpened() {
+        if (talkPausedByUser || _ui.value.talking) return
+        startTalk()
+    }
+
+    private fun onTalkIdle() {
+        if (!_ui.value.talking || asking || _ui.value.recognizing) return
+        GlassAsr.muted = false
+        showListeningCard()
+    }
+
+    private fun onAsrPartial(text: String) {
+        val now = SystemClock.uptimeMillis()
+        _ui.update { it.copy(asrPartial = text, status = "听到：$text") }
+        if (!_ui.value.talking || asking || _ui.value.recognizing) return
+        if (now - lastHudAt < 80) return
+        lastHudAt = now
+        val card = HudCard.listening(currentMatch(), text)
+        _ui.update { it.copy(card = card, asrPartial = text) }
+        CxrLinkHost.showCard(card)
     }
 
     private fun speakNewSentences(partial: String, done: Boolean) {
