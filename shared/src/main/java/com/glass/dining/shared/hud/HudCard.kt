@@ -1,6 +1,8 @@
 package com.glass.dining.shared.hud
 
+import com.glass.dining.shared.model.Coupon
 import com.glass.dining.shared.model.MatchResult
+import com.glass.dining.shared.model.MenuItem
 import com.glass.dining.shared.model.Store
 
 data class HudCard(
@@ -155,6 +157,69 @@ data class HudCard(
                 "还有$others"
             }
             return fromStore(result.store, extra)
+        }
+
+        fun fromMenu(storeName: String, items: List<MenuItem>): HudCard {
+            val first = items.getOrNull(0)
+            val second = items.getOrNull(1)
+            return HudCard(
+                title = storeName.ifBlank { "菜单" },
+                meta = "菜单 ${items.size}道",
+                wait = first?.let { "${it.name}¥${it.price}" }.orEmpty(),
+                extra = second?.let { "${it.name}¥${it.price}" } ?: "可以说下一道",
+                skill = "menu",
+                layout = LAYOUT_CARD,
+            ).clipped()
+        }
+
+        fun fromCoupons(storeName: String, coupons: List<Coupon>): HudCard {
+            val first = coupons.firstOrNull()
+            return HudCard(
+                title = storeName.ifBlank { "美团券" },
+                meta = if (coupons.isEmpty()) "这店暂无券" else "可核销${coupons.size}张",
+                wait = first?.let { "${it.title}¥${it.price}" }.orEmpty(),
+                extra = if (coupons.isEmpty()) "换一家或问团购" else "确认后才核销",
+                skill = "coupon",
+                layout = LAYOUT_CARD,
+            ).clipped()
+        }
+
+        fun fromPayConfirm(storeName: String, amount: Int, qrType: String): HudCard {
+            val channel = when (qrType) {
+                "weixin" -> "微信"
+                "alipay" -> "支付宝"
+                else -> "付款码"
+            }
+            return HudCard(
+                title = storeName.ifBlank { "买单" },
+                meta = "应付¥$amount",
+                wait = channel,
+                extra = "确认才付款",
+                skill = "pay",
+                layout = LAYOUT_CARD,
+            ).clipped()
+        }
+
+        fun fromPayResult(storeName: String, amount: Int): HudCard {
+            return HudCard(
+                title = storeName.ifBlank { "买单" },
+                meta = "已付¥$amount",
+                wait = "mock 成功",
+                extra = "不是真扣款",
+                skill = "browse",
+                layout = LAYOUT_CARD,
+            ).clipped()
+        }
+
+        fun fromRedeem(title: String, ok: Boolean): HudCard {
+            return HudCard(
+                title = title.ifBlank { "美团券" },
+                meta = if (ok) "核销成功" else "核销失败",
+                wait = "mock 回执",
+                extra = if (ok) "给服务员看手机" else "换一张再试",
+                skill = "browse",
+                layout = LAYOUT_CARD,
+            ).clipped()
         }
 
         fun fromStore(store: Store, extra: String? = null): HudCard {

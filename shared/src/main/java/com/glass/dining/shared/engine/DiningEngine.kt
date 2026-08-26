@@ -1,10 +1,15 @@
 package com.glass.dining.shared.engine
 
 import com.glass.dining.shared.mock.MockCatalog
+import com.glass.dining.shared.mock.MockCommerce
 import com.glass.dining.shared.model.ActiveSkill
+import com.glass.dining.shared.model.Coupon
 import com.glass.dining.shared.model.LookInput
 import com.glass.dining.shared.model.MatchResult
+import com.glass.dining.shared.model.MenuItem
+import com.glass.dining.shared.model.PayOrder
 import com.glass.dining.shared.model.QaResult
+import com.glass.dining.shared.model.RedeemReceipt
 import com.glass.dining.shared.model.Scene
 import com.glass.dining.shared.model.Store
 import kotlin.math.roundToInt
@@ -169,7 +174,10 @@ class QaEngine {
         return when {
             q.contains("人均") || q.contains("多少钱") || q.contains("贵不") -> "人均"
             q.contains("排队") || q.contains("等位") || q.contains("要等") -> "排队"
+            q.contains("菜单") || q.contains("菜谱") || q.contains("点什么") -> "招牌"
             q.contains("招牌") || q.contains("推荐") || q.contains("吃什么") || q.contains("菜") -> "招牌"
+            q.contains("券") || q.contains("核销") -> "团购"
+            q.contains("买单") || q.contains("结账") || q.contains("付款") -> "人均"
             q.contains("团购") || q.contains("优惠") || q.contains("便宜") -> "团购"
             q.contains("约会") || q.contains("浪漫") -> "约会"
             q.contains("带娃") || q.contains("小孩") || q.contains("儿童") -> "带娃"
@@ -193,6 +201,16 @@ class DiningSession(
         private set
     var activeSkill: ActiveSkill = ActiveSkill.NONE
         private set
+    var lastMenu: List<MenuItem> = emptyList()
+        private set
+    var lastCoupons: List<Coupon> = emptyList()
+        private set
+    var pendingCoupon: Coupon? = null
+        private set
+    var pendingPay: PayOrder? = null
+        private set
+    var lastReceipt: RedeemReceipt? = null
+        private set
 
     val currentStore: Store?
         get() = lastMatch?.store
@@ -202,6 +220,11 @@ class DiningSession(
     fun setScene(id: String) {
         sceneId = id
         lastMatch = null
+        lastMenu = emptyList()
+        lastCoupons = emptyList()
+        pendingCoupon = null
+        pendingPay = null
+        lastReceipt = null
         activeSkill = ActiveSkill.NONE
     }
 
@@ -256,12 +279,91 @@ class DiningSession(
 
     fun startNav(): Boolean {
         if (lastMatch?.store == null) return false
+        clearTransient()
         activeSkill = ActiveSkill.NAV
         return true
     }
 
     fun stopNav() {
         activeSkill = if (lastMatch != null) ActiveSkill.BROWSE else ActiveSkill.NONE
+    }
+
+    fun startMenu(items: List<MenuItem> = MockCommerce.menuOf(currentStore?.id.orEmpty())): List<MenuItem> {
+        lastMenu = items
+        activeSkill = ActiveSkill.MENU
+        return items
+    }
+
+    fun listCoupons(): List<Coupon> {
+        val storeId = currentStore?.id ?: return emptyList()
+        lastCoupons = MockCommerce.couponsOf(storeId)
+        pendingCoupon = null
+        activeSkill = ActiveSkill.COUPON
+        return lastCoupons
+    }
+
+    fun prepareCoupon(couponId: String): Coupon? {
+        val coupon = lastCoupons.firstOrNull { it.id == couponId }
+            ?: currentStore?.id?.let { storeId -> MockCommerce.couponsOf(storeId).firstOrNull { it.id == couponId } }
+            ?: lastCoupons.firstOrNull()
+        pendingCoupon = coupon
+        if (coupon != null) {
+            activeSkill = ActiveSkill.COUPON
+        }
+        return coupon
+    }
+
+    fun redeemCoupon(): RedeemReceipt {
+        val coupon = pendingCoupon
+        if (coupon == null) {
+            return RedeemReceipt("", "", false, "", "还没选定要核销的券")
+        }
+        val receipt = RedeemReceipt(
+            couponId = coupon.id,
+            title = coupon.title,
+            ok = coupon.usable,
+            sequenceId = "mock-${System.currentTimeMillis()}",
+            message = if (coupon.usable) "已核销${coupon.title}" else "这张券现在不能用",
+        )
+        lastReceipt = receipt
+        pendingCoupon = null
+        activeSkill = if (lastMatch != null) ActiveSkill.BROWSE else ActiveSkill.NONE
+        return receipt
+    }
+
+    fun preparePay(order: PayOrder): PayOrder {
+        pendingPay = order
+        activeSkill = ActiveSkill.PAY
+        return order
+    }
+
+    fun confirmPay(): PayOrder? {
+        val order = pendingPay ?: return null
+        val done = order.copy(confirmed = true)
+        pendingPay = null
+        lastReceipt = RedeemReceipt(
+            couponId = "",
+            title = "买单",
+            ok = true,
+            sequenceId = "pay-${System.currentTimeMillis()}",
+            message = "已付${done.amount}元给${done.storeName}",
+        )
+        activeSkill = if (lastMatch != null) ActiveSkill.BROWSE else ActiveSkill.NONE
+        return done
+    }
+
+    fun cancelPay() {
+        pendingPay = null
+        if (activeSkill == ActiveSkill.PAY) {
+            activeSkill = if (lastMatch != null) ActiveSkill.BROWSE else ActiveSkill.NONE
+        }
+    }
+
+    private fun clearTransient() {
+        lastMenu = emptyList()
+        lastCoupons = emptyList()
+        pendingCoupon = null
+        pendingPay = null
     }
 
     fun ask(question: String): QaResult {

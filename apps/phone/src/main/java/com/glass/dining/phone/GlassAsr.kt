@@ -29,6 +29,7 @@ object GlassAsr {
 
     var onPartial: ((String) -> Unit)? = null
     var onUtterance: ((String) -> Unit)? = null
+    var onEndpoint: (() -> Unit)? = null
     var onError: ((String) -> Unit)? = null
 
     @Volatile var muted: Boolean = false
@@ -57,6 +58,15 @@ object GlassAsr {
 
     fun preload(context: Context) {
         Thread({
+            if (NlsClient.ready) {
+                val tokenError = NlsClient.ensureToken()
+                if (tokenError == null) {
+                    Log.i(TAG, "glass asr nls token ready")
+                } else {
+                    Log.w(TAG, "glass asr nls preload: $tokenError")
+                }
+                return@Thread
+            }
             val error = ensureModel(context)
             if (error == null) {
                 Log.i(TAG, "glass asr model ready")
@@ -67,13 +77,22 @@ object GlassAsr {
     }
 
     fun start(context: Context): String? {
-        val loadError = ensureModel(context)
-        if (loadError != null) return loadError
+        val engineError = if (NlsClient.ready) {
+            NlsClient.ensureToken()
+        } else {
+            ensureModel(context)
+        }
+        if (engineError != null) return engineError
         if (!running.compareAndSet(false, true)) return null
         val next = LinkedBlockingQueue<ByteArray>(48)
         queue = next
-        Thread({ listenLoop(next) }, "glass-asr").start()
-        Log.i(TAG, "glass asr started")
+        if (NlsClient.ready) {
+            Thread({ listenLoopCloud(next) }, "glass-asr-nls").start()
+            Log.i(TAG, "glass asr started engine=nls")
+        } else {
+            Thread({ listenLoop(next) }, "glass-asr").start()
+            Log.i(TAG, "glass asr started engine=vosk")
+        }
         return null
     }
 
@@ -147,9 +166,6 @@ object GlassAsr {
                     bestPartial = partial
                     lastPartialAt = now
                 }
-                if (partial.isNotBlank()) {
-                    main.post { onPartial?.invoke(partial) }
-                }
                 if (level >= holdThr) {
                     lastVoiceAt = now
                 }
@@ -166,7 +182,10 @@ object GlassAsr {
                 bestPartial = ""
                 if (text.isNotBlank()) {
                     muted = true
-                    main.post { onUtterance?.invoke(text) }
+                    main.post {
+                        onEndpoint?.invoke()
+                        onUtterance?.invoke(text)
+                    }
                 }
             }
         } catch (error: Exception) {
@@ -180,6 +199,88 @@ object GlassAsr {
             running.set(false)
             Log.i(TAG, "glass asr stopped")
         }
+    }
+
+    private fun listenLoopCloud(incoming: LinkedBlockingQueue<ByteArray>) {
+        try {
+            var noise = 80.0
+            var inSpeech = false
+            var speechStartedAt = 0L
+            var lastVoiceAt = 0L
+            val pcm = ArrayList<ByteArray>()
+            var pcmBytes = 0
+            while (running.get()) {
+                val chunk = incoming.poll(80, TimeUnit.MILLISECONDS) ?: continue
+                if (muted || PhoneTts.speaking) {
+                    if (inSpeech) {
+                        inSpeech = false
+                        pcm.clear()
+                        pcmBytes = 0
+                    }
+                    continue
+                }
+                val even = chunk.size - (chunk.size % 2)
+                if (even < 2) continue
+                val shorts = toShorts(chunk, even)
+                val now = System.currentTimeMillis()
+                val level = rms(shorts)
+                val startThr = max(noise * 1.55, 180.0)
+                val holdThr = max(noise * 1.15, 110.0)
+                if (!inSpeech) {
+                    if (level < 20) continue
+                    noise = noise * 0.94 + level * 0.06
+                    if (level < startThr) continue
+                    inSpeech = true
+                    speechStartedAt = now
+                    lastVoiceAt = now
+                    pcm.clear()
+                    pcmBytes = 0
+                    Log.i(TAG, "glass asr speech start rms=${level.toInt()} thr=${startThr.toInt()} engine=nls")
+                }
+                pcm.add(if (even == chunk.size) chunk else chunk.copyOf(even))
+                pcmBytes += even
+                if (level >= holdThr) {
+                    lastVoiceAt = now
+                }
+                val elapsed = now - speechStartedAt
+                val quietLongEnough = now - lastVoiceAt >= ENDPOINT_SILENCE_MS
+                val finished = elapsed >= MIN_UTTER_MS && quietLongEnough
+                val tooLong = elapsed > MAX_UTTER_MS || pcmBytes > SAMPLE_RATE * 2 * 20
+                if (!tooLong && !finished) continue
+                val audio = concat(pcm, pcmBytes)
+                pcm.clear()
+                pcmBytes = 0
+                inSpeech = false
+                muted = true
+                main.post { onEndpoint?.invoke() }
+                val text = NlsClient.recognize(audio).orEmpty()
+                Log.i(TAG, "glass asr nls text=$text quiet=${now - lastVoiceAt}ms bytes=${audio.size}")
+                if (text.isNotBlank()) {
+                    main.post { onUtterance?.invoke(text) }
+                } else {
+                    muted = false
+                    main.post { onPartial?.invoke("") }
+                }
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "glass asr nls failed", error)
+            main.post { onError?.invoke(error.message ?: "识别失败") }
+        } finally {
+            running.set(false)
+            Log.i(TAG, "glass asr nls stopped")
+        }
+    }
+
+    private fun concat(parts: List<ByteArray>, total: Int): ByteArray {
+        val out = ByteArray(total)
+        var offset = 0
+        for (part in parts) {
+            val n = minOf(part.size, total - offset)
+            if (n <= 0) break
+            System.arraycopy(part, 0, out, offset, n)
+            offset += n
+        }
+        return if (offset == out.size) out else out.copyOf(offset)
     }
 
     private fun ensureModel(context: Context): String? {

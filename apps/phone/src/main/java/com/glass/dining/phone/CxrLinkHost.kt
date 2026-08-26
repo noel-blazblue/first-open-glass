@@ -37,6 +37,7 @@ object CxrLinkHost {
     var onHudOpened: (() -> Unit)? = null
     var onFrame: ((ByteArray) -> Unit)? = null
     var onPose: ((Float) -> Unit)? = null
+    var onRtc: ((String, String?) -> Unit)? = null
     val pcmPackets: Int
         get() = audioPackets
 
@@ -227,6 +228,14 @@ object CxrLinkHost {
                     val msg = readString(caps, 1).orEmpty()
                     main.post { onStatus?.invoke("眼镜: $msg") }
                 }
+                NavProtocol.CMD_RTC_READY,
+                NavProtocol.CMD_RTC_SDP,
+                NavProtocol.CMD_RTC_ICE,
+                NavProtocol.CMD_RTC_STAT,
+                -> {
+                    val payload = readString(caps, 1)
+                    main.post { onRtc?.invoke(cmd, payload) }
+                }
             }
         }
     }
@@ -385,6 +394,10 @@ object CxrLinkHost {
         sendCmd(NavProtocol.CMD_FRAME_OK)
     }
 
+    fun sendRtc(cmd: String, json: String? = null) {
+        sendCmd(cmd, json)
+    }
+
     fun queryAndStart() {
         val link = sharedLink ?: return
         if (!linkReady()) {
@@ -430,7 +443,7 @@ object CxrLinkHost {
             Log.w(TAG, "sendCustomCmd failed cmd=$cmd", error)
             null
         }
-        Log.i(TAG, "sendCustomCmd cmd=$cmd code=$code")
+        Log.i(TAG, "sendCustomCmd cmd=$cmd code=$code bytes=${json?.length ?: 0}")
     }
 
     private fun slicePcm(data: ByteArray?, offset: Int, length: Int): ByteArray? {

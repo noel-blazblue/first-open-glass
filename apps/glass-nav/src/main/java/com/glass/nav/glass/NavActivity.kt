@@ -22,6 +22,7 @@ class NavActivity : android.app.Activity() {
     @Volatile private var navActive: Boolean = false
     @Volatile private var snapOnce: Boolean = false
     @Volatile private var wantMic: Boolean = false
+    @Volatile private var rtcActive: Boolean = false
 
     private val drawTick = object : Runnable {
         override fun run() {
@@ -83,16 +84,25 @@ class NavActivity : android.app.Activity() {
                 showHint(hint)
             },
             onCamera = { on ->
-                if (on) {
+                if (on && rtcActive) {
+                    hud.status = "视频流占用相机"
+                } else if (on) {
                     navActive = true
                     openCamera()
                 } else {
                     navActive = false
                     snapOnce = false
-                    stopCamera()
+                    if (!rtcActive) stopCamera()
                 }
             },
-            onSnap = { snapPhoto() },
+            onSnap = {
+                if (rtcActive) {
+                    stopRtc()
+                    main.postDelayed({ snapPhoto() }, 500)
+                } else {
+                    snapPhoto()
+                }
+            },
             onMic = { on ->
                 wantMic = on
                 if (on) startMic() else stopMic()
@@ -105,6 +115,7 @@ class NavActivity : android.app.Activity() {
                 main.removeCallbacks(frameTimeout)
                 camera.markIdle()
             },
+            onRtc = { cmd, json -> handleRtc(cmd, json) },
         )
         mic.onPcm = { pcm -> bridge.sendPcm(pcm) }
         bridge.start()
@@ -117,7 +128,7 @@ class NavActivity : android.app.Activity() {
         imu.start()
         main.removeCallbacks(drawTick)
         main.post(drawTick)
-        if (navActive) {
+        if (navActive && !rtcActive) {
             openCamera()
         }
         if (wantMic) {
@@ -141,6 +152,8 @@ class NavActivity : android.app.Activity() {
         navActive = false
         snapOnce = false
         wantMic = false
+        rtcActive = false
+        GlassRtc.stop()
         stopCamera()
         stopMic()
         imu.stop()
@@ -185,7 +198,39 @@ class NavActivity : android.app.Activity() {
         }, 900)
     }
 
+    private fun handleRtc(cmd: String, json: String?) {
+        when (cmd) {
+            NavProtocol.CMD_RTC_START -> startRtc()
+            NavProtocol.CMD_RTC_STOP -> stopRtc()
+            NavProtocol.CMD_RTC_SDP -> GlassRtc.onRemoteSdp(json)
+            NavProtocol.CMD_RTC_ICE -> GlassRtc.onRemoteIce(json)
+        }
+    }
+
+    private fun startRtc() {
+        rtcActive = true
+        navActive = false
+        snapOnce = false
+        stopCamera()
+        hud.status = "视频流"
+        GlassRtc.start(this) { cmd, payload ->
+            main.post { bridge.sendRtc(cmd, payload) }
+        }
+        Log.i(TAG, "rtc start requested")
+    }
+
+    private fun stopRtc() {
+        rtcActive = false
+        GlassRtc.stop()
+        hud.status = ""
+        Log.i(TAG, "rtc stop")
+    }
+
     private fun openCamera() {
+        if (rtcActive) {
+            hud.status = "视频流占用相机"
+            return
+        }
         if (checkSelfPermission(Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED
         ) {

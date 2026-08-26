@@ -28,16 +28,21 @@ object PhoneAi {
 技能规则：
 - 用户想吃什么、附近有什么、不要排队：调用 recommend。
 - 认眼前这家店、看店招、问「这是哪家」：调用 look_store。已经有当前门店且只是问排队/人均/菜单/包间，直接回答，不要拍照。
+- 导航中问入口、路牌、这是不是店门口：调用 read_sign，拍一张辅助，不要改路线，也不要 stop_nav。
+- 看看菜单、点什么：调用 read_menu。没有当前门店就先认店或推荐。
 - 用户选定一家（第一家、第二家、去某店名）：调用 select_store。若同一句话已经要出发，接着调用 start_nav。
 - 有当前门店、且用户要出发（走、出发、现在去、好、导航、带我去等任意去意）：调用 start_nav。用户说了店名（如去海底捞）时，start_nav 必须带上 name，或先 select_store 再 start_nav。不要把上一张店（例如喜茶）当成目的地。没选店就先 recommend 或追问「去哪家」，禁止空目的开导航。刚推荐还没选店时不要 start_nav。
 - 只是在问排队/人均/包间，不要 start_nav。
+- 扫码买单、付款、结账：先 checkout（不要带 confirm）。工具会给出金额和商户，必须再问用户确认；用户明确说确认/付钱后再 checkout，confirm=true。没确认禁止付款。
+- 用美团券、核销：先 list_coupons。用户选定一张后 redeem_coupon 且 confirm=true。没确认不要核销。扫到桌码不是核销成功。
 - 取消、到了、换一家：先 stop_nav（如果正在导航），换一家再 recommend。
 - 导航中问店，直接答，不要 stop_nav，也不要再 start_nav。
 - 闲聊、听不清、无关餐饮，不要乱调工具。
-调用工具后，用工具返回的数据做一两句口语；选店后确认店名即可；开始导航说「开始去…」。"""
-    private const val VISION_SYSTEM = """你是乐奇 AI 眼镜上的到店餐饮助手。用户拍了眼前画面。
+调用工具后，用工具返回的数据做一两句口语；选店后确认店名即可；开始导航说「开始去…」。支付和券都是 mock，可以说「演示已付/已核销」，不要说已经真的扣款。"""
+    private const val VISION_SYSTEM = """你是乐奇 AI 眼镜上的到店餐饮助手。下面是端侧抽到的文字，以及必要时的一张裁剪图。
 只输出一个 JSON，不要 markdown：
-{"speak":"口语一两句，不超过80字","hud":"镜片短句，不超过16字","store":"店名或品牌，看不清就空字符串"}"""
+{"speak":"口语一两句，不超过80字","hud":"镜片短句，不超过16字","store":"店名或品牌，看不清就空字符串","scene":"store_sign|street_sign|menu|unknown","confidence":0.0}
+评分、排队、营业不要猜；看不清就说看不清。不要输出二维码原文。"""
 
     @Volatile private var token: String = ""
     @Volatile private var baseUrl: String = DEFAULT_BASE
@@ -46,6 +51,7 @@ object PhoneAi {
     @Volatile var amapKey: String = ""
         private set
     private val history = CopyOnWriteArrayList<Pair<String, String>>()
+    private val harness = DiningAgentHarness(maxSteps = 3)
 
     val ready: Boolean
         get() = token.isNotBlank() && baseUrl.isNotBlank()
@@ -64,11 +70,20 @@ object PhoneAi {
         }
         for (file in files) {
             if (!file.exists()) continue
-            applyEnv(file.readText())
-            Log.i(TAG, "loaded ${file.name} keys token=${token.isNotBlank()} amap=${amapKey.isNotBlank()} base=$baseUrl model=$chatModel")
-            if (ready) return
+            val raw = file.readText()
+            applyEnv(raw)
+            NlsClient.applyEnv(raw)
+            Log.i(
+                TAG,
+                "loaded ${file.name} keys token=${token.isNotBlank()} amap=${amapKey.isNotBlank()} nls=${NlsClient.ready} base=$baseUrl model=$chatModel",
+            )
         }
-        Log.w(TAG, "workspace .env 还没推到手机，或缺少 DEEPSEEK_API_KEY")
+        if (!ready) {
+            Log.w(TAG, "workspace .env 还没推到手机，或缺少 DEEPSEEK_API_KEY")
+        }
+        if (!NlsClient.ready) {
+            Log.w(TAG, "未配置阿里云语音，识别将回退 Vosk，播报将回退系统 TTS")
+        }
     }
 
     fun ask(
@@ -87,7 +102,7 @@ object PhoneAi {
             storeHint
         }
         val reply = if (ready) {
-            chat(prompt, onDelta, onTool)
+            chat(prompt, text, onDelta, onTool)
         } else {
             null
         }
@@ -104,14 +119,14 @@ object PhoneAi {
         return result
     }
 
-    fun look(jpeg: ByteArray): AiReply {
+    fun look(jpeg: ByteArray, task: String = "look_store", ocrText: String = ""): AiReply {
         if (!ready) {
             return AiReply("还没配 DeepSeek 密钥，先看手机提示。", "未配置密钥", false)
         }
         if (jpeg.isEmpty()) {
             return AiReply("眼镜没拍到图。", "拍照失败", false)
         }
-        return vision(jpeg) ?: AiReply("这张店招我这次没认出来。", "未认出店招", false)
+        return vision(jpeg, task, ocrText) ?: AiReply("这张画面我这次没认出来。", "未认出", false)
     }
 
     private fun fallback(text: String): AiReply {
@@ -124,58 +139,60 @@ object PhoneAi {
         return AiReply(speak, heard, false)
     }
 
-    private fun chat(question: String, onDelta: ((String) -> Unit)?, onTool: ((String, JSONObject) -> String)?): AiReply? {
+    private fun chat(
+        question: String,
+        userText: String,
+        onDelta: ((String) -> Unit)?,
+        onTool: ((String, JSONObject) -> String)?,
+    ): AiReply? {
         val messages = JSONArray()
             .put(JSONObject().put("role", "system").put("content", SYSTEM))
         for ((role, content) in history.takeLast(12)) {
             messages.put(JSONObject().put("role", role).put("content", content))
         }
         messages.put(JSONObject().put("role", "user").put("content", question))
-        val tools = if (onTool != null) diningTools() else null
-        val first = completeMessage(chatModel, messages, 25_000, jsonMode = false, tools = tools) ?: return null
-        val calls = first.optJSONArray("tool_calls")
-        if (calls != null && calls.length() > 0 && onTool != null) {
-            val assistant = JSONObject().put("role", "assistant")
-            val content = first.optString("content")
-            if (content.isBlank()) {
-                assistant.put("content", JSONObject.NULL)
-            } else {
-                assistant.put("content", content)
-            }
-            messages.put(assistant.put("tool_calls", calls))
-            val ordered = orderedToolCalls(calls)
-            for (index in 0 until ordered.length()) {
-                val call = ordered.optJSONObject(index) ?: continue
-                val id = call.optString("id")
-                val fn = call.optJSONObject("function")
-                val name = fn?.optString("name").orEmpty()
-                val args = parseArgs(fn?.optString("arguments"))
-                Log.i(TAG, "tool $name args=$args")
-                val result = try {
-                    onTool(name, args)
-                } catch (error: Exception) {
-                    JSONObject().put("ok", false).put("error", error.message ?: name).toString()
-                }
-                messages.put(
-                    JSONObject()
-                        .put("role", "tool")
-                        .put("tool_call_id", id)
-                        .put("content", result),
-                )
-            }
+        if (onTool == null) {
+            return streamChat(messages, onDelta)
+        }
+
+        val tools = diningTools()
+        val outcome = harness.run(
+            messages = messages,
+            tools = tools,
+            userText = userText,
+            requestModel = { currentMessages, currentTools ->
+                completeMessage(chatModel, currentMessages, 25_000, jsonMode = false, tools = currentTools)
+            },
+            orderCalls = ::orderedToolCalls,
+            executeTool = onTool,
+        )
+        if (outcome.failed) return null
+        if (outcome.reachedLimit) {
             return streamChat(messages, onDelta, tools)
         }
-        val text = first.optString("content").ifBlank { first.optString("reasoning_content") }
+        val final = outcome.finalMessage ?: return null
+        val text = final.optString("content").ifBlank { final.optString("reasoning_content") }
         if (text.isNotBlank()) {
             onDelta?.invoke(text)
         }
-        return plainReply(text) ?: streamChat(messages, onDelta, tools)
+        return plainReply(text)
     }
 
-    private fun vision(jpeg: ByteArray): AiReply? {
+    private fun vision(jpeg: ByteArray, task: String, ocrText: String): AiReply? {
         val b64 = Base64.encodeToString(jpeg, Base64.NO_WRAP)
+        val prompt = buildString {
+            append("任务：$task。")
+            when (task) {
+                "read_menu" -> append("这是菜单，抽出菜名和价格，不要编造没有的菜。")
+                "read_sign" -> append("这是路牌或入口，只读看到的字，不要判断能不能过马路。")
+                else -> append("这是眼镜拍到的店招，帮我认店并简短介绍。")
+            }
+            if (ocrText.isNotBlank()) {
+                append(" 端侧OCR：").append(ocrText.take(400))
+            }
+        }
         val userContent = JSONArray()
-            .put(JSONObject().put("type", "text").put("text", "这是眼镜拍到的店招，帮我认店并简短介绍。"))
+            .put(JSONObject().put("type", "text").put("text", prompt))
             .put(
                 JSONObject()
                     .put("type", "image_url")
@@ -224,6 +241,12 @@ object PhoneAi {
             .put(fn("look_store", "用眼镜拍眼前店招并识别是哪家店。仅在用户要认店、看店招、问这是哪家时调用。", JSONObject()
                 .put("type", "object")
                 .put("properties", JSONObject().put("reason", JSONObject().put("type", "string").put("description", "为什么要拍照认店")))))
+            .put(fn("read_sign", "拍一张路牌或入口，读出看到的字。导航中问入口、路牌时调用。不要据此改路线。", JSONObject()
+                .put("type", "object")
+                .put("properties", JSONObject().put("reason", JSONObject().put("type", "string")))))
+            .put(fn("read_menu", "拍一张菜单，抽出菜名和价格。用户说看看菜单、点什么时调用。", JSONObject()
+                .put("type", "object")
+                .put("properties", JSONObject().put("reason", JSONObject().put("type", "string")))))
             .put(fn("recommend", "按用户口味或条件推荐附近 2～3 家餐厅。用户说附近火锅、不要排队、有什么好吃的时调用。", JSONObject()
                 .put("type", "object")
                 .put("properties", JSONObject()
@@ -244,6 +267,19 @@ object PhoneAi {
             .put(fn("stop_nav", "停止导航技能。用户说取消、到了、换一家时调用。", JSONObject()
                 .put("type", "object")
                 .put("properties", JSONObject())))
+            .put(fn("list_coupons", "列出当前门店可核销的 mock 美团券。用户说用券、核销、美团券时调用。不要拍照。", JSONObject()
+                .put("type", "object")
+                .put("properties", JSONObject())))
+            .put(fn("redeem_coupon", "核销一张 mock 美团券。必须用户明确确认后才把 confirm 设为 true。", JSONObject()
+                .put("type", "object")
+                .put("properties", JSONObject()
+                    .put("coupon_id", JSONObject().put("type", "string").put("description", "券 id"))
+                    .put("title", JSONObject().put("type", "string").put("description", "券标题"))
+                    .put("confirm", JSONObject().put("type", "boolean").put("description", "用户是否明确确认核销")))))
+            .put(fn("checkout", "扫码买单（mock）。先不要带 confirm，只识别付款码并展示金额。用户明确确认后再 checkout，confirm=true。", JSONObject()
+                .put("type", "object")
+                .put("properties", JSONObject()
+                    .put("confirm", JSONObject().put("type", "boolean").put("description", "用户是否明确确认付款")))))
     }
 
     private fun fn(name: String, description: String, parameters: JSONObject): JSONObject {
@@ -262,24 +298,20 @@ object PhoneAi {
         val rank = mapOf(
             "stop_nav" to 0,
             "look_store" to 1,
-            "recommend" to 2,
-            "select_store" to 3,
-            "start_nav" to 4,
+            "read_sign" to 2,
+            "read_menu" to 3,
+            "recommend" to 4,
+            "select_store" to 5,
+            "list_coupons" to 6,
+            "checkout" to 7,
+            "redeem_coupon" to 8,
+            "start_nav" to 9,
         )
         val list = (0 until calls.length()).mapNotNull { calls.optJSONObject(it) }
             .sortedBy { rank[it.optJSONObject("function")?.optString("name")] ?: 9 }
         val ordered = JSONArray()
         list.forEach { ordered.put(it) }
         return ordered
-    }
-
-    private fun parseArgs(raw: String?): JSONObject {
-        if (raw.isNullOrBlank()) return JSONObject()
-        return try {
-            JSONObject(raw)
-        } catch (_: Exception) {
-            JSONObject()
-        }
     }
 
     private fun streamChat(messages: JSONArray, onDelta: ((String) -> Unit)?, tools: JSONArray? = null): AiReply? {

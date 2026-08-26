@@ -50,7 +50,48 @@ enum class ActiveSkill {
     NONE,
     BROWSE,
     NAV,
+    MENU,
+    COUPON,
+    PAY,
 }
+
+data class MenuItem(
+    val name: String,
+    val price: Int,
+    val category: String = "",
+)
+
+data class Coupon(
+    val id: String,
+    val storeId: String,
+    val title: String,
+    val price: Int,
+    val original: Int,
+    val usable: Boolean = true,
+)
+
+data class PayOrder(
+    val merchantId: String,
+    val storeName: String,
+    val amount: Int,
+    val qrType: String,
+    val table: String = "",
+    val confirmed: Boolean = false,
+)
+
+data class RedeemReceipt(
+    val couponId: String,
+    val title: String,
+    val ok: Boolean,
+    val sequenceId: String,
+    val message: String,
+)
+
+data class ScoredStore(
+    val store: Store,
+    val score: Int,
+    val key: String,
+)
 
 data class MatchResult(
     val store: Store,

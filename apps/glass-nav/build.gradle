@@ -28,9 +28,19 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+            pickFirsts += [
+                "**/libc++_shared.so",
+                "**/libjingle_peerconnection_so.so",
+            ]
+        }
+    }
 }
 
 dependencies {
     implementation project(":nav-api")
     implementation("com.rokid.cxr:cxr-service-bridge:1.0-20260522.063600-105")
+    implementation("io.getstream:stream-webrtc-android:1.3.10")
 }

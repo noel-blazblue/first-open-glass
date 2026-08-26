@@ -18,6 +18,7 @@ class NavBridge(
     private val onCalibrate: () -> Unit,
     private val onStatus: (String) -> Unit,
     private val onFrameAck: () -> Unit,
+    private val onRtc: (String, String?) -> Unit,
 ) {
     private val main = Handler(Looper.getMainLooper())
     private val bridge = CXRServiceBridge()
@@ -80,6 +81,11 @@ class NavBridge(
                     sendingFrame = false
                     main.post { onFrameAck() }
                 }
+                NavProtocol.CMD_RTC_START,
+                NavProtocol.CMD_RTC_STOP,
+                NavProtocol.CMD_RTC_SDP,
+                NavProtocol.CMD_RTC_ICE,
+                -> main.post { onRtc(cmd, readString(args, 1)) }
             }
         }
     }
@@ -96,6 +102,18 @@ class NavBridge(
         caps.write(NavProtocol.CMD_READY)
         val result = bridge.sendMessage(NavProtocol.CHANNEL_UP, caps)
         Log.i(TAG, "send ready result=$result")
+    }
+
+    fun sendRtc(cmd: String, json: String? = null) {
+        val caps = Caps()
+        caps.write(cmd)
+        if (!json.isNullOrBlank()) {
+            caps.write(json)
+        }
+        val result = bridge.sendMessage(NavProtocol.CHANNEL_UP, caps)
+        if (cmd != NavProtocol.CMD_RTC_ICE) {
+            Log.i(TAG, "send rtc $cmd code=$result bytes=${json?.length ?: 0}")
+        }
     }
 
     fun sendError(message: String) {

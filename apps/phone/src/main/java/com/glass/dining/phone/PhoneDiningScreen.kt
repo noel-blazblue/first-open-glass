@@ -32,6 +32,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.glass.dining.shared.hud.GlassesHudPreview
 import com.glass.dining.shared.hud.HudColors
 import com.glass.dining.shared.model.Store
@@ -52,14 +53,6 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
     ) {
         Text("到餐 Agent", color = HudColors.green, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(state.status, color = TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
-        if (state.talking && state.asrPartial.isNotBlank()) {
-            Text(
-                "识别中：${state.asrPartial}",
-                color = HudColors.green,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-        }
         Text(
             "对话是入口。选定门店后，说走、出发就可以导航。没有「开始导航」按钮。",
             color = TextDim,
@@ -77,6 +70,30 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
         }
         Spacer(Modifier.height(12.dp))
         TalkButton(talking = state.talking) { viewModel.toggleTalk() }
+        Spacer(Modifier.height(8.dp))
+        ActionButton(
+            if (state.rtcOn) "关闭视频流" else "开视频流（探针）",
+            Modifier.fillMaxWidth(),
+        ) { viewModel.toggleRtc() }
+        if (state.rtcOn || state.rtcLine.isNotBlank()) {
+            Text(
+                state.rtcLine.ifBlank { "视频流准备中" },
+                color = HudColors.green,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            AndroidView(
+                factory = { ctx ->
+                    org.webrtc.SurfaceViewRenderer(ctx).also { PhoneRtc.attachRenderer(it) }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp)
+                    .clip(RoundedCornerShape(12.dp)),
+                onRelease = { PhoneRtc.detachRenderer(it) },
+            )
+        }
         Spacer(Modifier.height(12.dp))
 
         Text("商圈", color = TextMain, fontSize = 14.sp)

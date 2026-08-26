@@ -16,3 +16,6 @@ tmp/
 .cursor/glass-ai.env
 apps/phone/src/main/assets/asr/*.zip
 .cursor/glass-ai-session.json
+docs/vision-samples/**/*.jpg
+docs/vision-samples/**/*.jpeg
+docs/vision-samples/**/*.png

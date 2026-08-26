@@ -1,19 +1,27 @@
 package com.glass.dining.shared.engine
 
 import com.glass.dining.shared.model.Scene
+import com.glass.dining.shared.model.ScoredStore
 import com.glass.dining.shared.model.Store
 import kotlin.math.absoluteValue
 
 object StoreVision {
     fun matchStore(scene: Scene, rawHint: String): Store? {
+        return rankStores(scene, rawHint).firstOrNull()?.store
+    }
+
+    fun rankStores(scene: Scene, rawHint: String): List<ScoredStore> {
         val hint = rawHint.trim()
-        if (hint.isBlank() || isUnknown(hint)) return null
+        if (hint.isBlank() || isUnknown(hint)) return emptyList()
         val compact = compact(hint)
-        val hits = scene.stores.mapNotNull { store ->
-            val score = keysOf(store).maxOf { key -> scoreKey(compact, hint, key) }
-            if (score > 0) store to score else null
-        }
-        return hits.maxByOrNull { it.second }?.first
+        return scene.stores.mapNotNull { store ->
+            val best = keysOf(store).map { key -> key to scoreKey(compact, hint, key) }.maxByOrNull { it.second }
+            if (best != null && best.second > 0) {
+                ScoredStore(store, best.second, best.first)
+            } else {
+                null
+            }
+        }.sortedByDescending { it.score }
     }
 
     fun pickByFingerprint(scene: Scene, fingerprint: Long): Store? {
