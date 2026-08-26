@@ -1,6 +1,7 @@
 package com.glass.dining.shared.engine
 
 import com.glass.dining.shared.mock.MockCatalog
+import com.glass.dining.shared.model.ActiveSkill
 import com.glass.dining.shared.model.LookInput
 import com.glass.dining.shared.model.MatchResult
 import com.glass.dining.shared.model.QaResult
@@ -42,6 +43,55 @@ class DiningMatcher(
 
     fun select(sceneId: String, storeId: String): MatchResult {
         return match(LookInput(sceneId = sceneId, forceStoreId = storeId))
+    }
+
+    fun recommend(sceneId: String, query: String): MatchResult {
+        val scene = catalog.sceneById(sceneId)
+        val picked = filterRecommend(scene.stores, query).ifEmpty {
+            scene.stores.sortedBy { it.distanceMeters }.take(3)
+        }
+        val store = picked.first()
+        val names = picked.joinToString("、") { it.shortName }
+        val waitHint = if (picked.all { it.waitMinutes <= 0 }) {
+            "这几家现在都不用排。"
+        } else {
+            ""
+        }
+        return MatchResult(
+            store = store,
+            candidates = picked,
+            tts = "附近有$names。${waitHint}去哪家？",
+            confidence = 0.86f,
+            sceneId = scene.id,
+        )
+    }
+
+    private fun filterRecommend(stores: List<Store>, query: String): List<Store> {
+        val q = query.trim()
+        var pool = stores
+        val cuisine = listOf(
+            "火锅", "川菜", "烧烤", "咖啡", "茶", "西餐", "快餐",
+            "面", "杭帮", "云南", "台菜", "北京", "西北", "点心",
+        ).firstOrNull { q.contains(it) }
+        if (cuisine != null) {
+            pool = pool.filter { store ->
+                store.category.contains(cuisine) ||
+                    store.tags.any { it.contains(cuisine) } ||
+                    store.name.contains(cuisine) ||
+                    store.shortName.contains(cuisine)
+            }
+        }
+        if (q.contains("排队") || q.contains("不用排") || q.contains("别排") || q.contains("别等")) {
+            val shortWait = pool.filter { it.waitMinutes <= 10 }.sortedBy { it.waitMinutes }
+            pool = shortWait.ifEmpty { pool.sortedBy { it.waitMinutes } }
+        }
+        if (q.contains("约会")) {
+            pool = pool.filter { "约会" in it.suitable }.ifEmpty { pool }
+        }
+        if (q.contains("带娃") || q.contains("小孩")) {
+            pool = pool.filter { "带娃" in it.suitable }.ifEmpty { pool }
+        }
+        return pool.sortedBy { it.distanceMeters }.take(3)
     }
 
     private fun pickDefault(scene: Scene, headingDegrees: Float?): Store {
@@ -126,7 +176,7 @@ class QaEngine {
             q.contains("包间") || q.contains("包厢") -> "包间"
             q.contains("评价") || q.contains("怎么样") || q.contains("评分") -> "评价"
             q.contains("营业") || q.contains("开门") || q.contains("打烊") -> "营业"
-            q.contains("怎么走") || q.contains("导航") || q.contains("带我去") -> "导航"
+            q.contains("怎么走") || q.contains("导航") || q.contains("出发") || q.contains("带我去") -> "导航"
             else -> "评价"
         }
     }
@@ -141,10 +191,18 @@ class DiningSession(
         private set
     var lastMatch: MatchResult? = null
         private set
+    var activeSkill: ActiveSkill = ActiveSkill.NONE
+        private set
+
+    val currentStore: Store?
+        get() = lastMatch?.store
+    val candidates: List<Store>
+        get() = lastMatch?.candidates.orEmpty()
 
     fun setScene(id: String) {
         sceneId = id
         lastMatch = null
+        activeSkill = ActiveSkill.NONE
     }
 
     fun look(
@@ -163,23 +221,59 @@ class DiningSession(
             ),
         )
         lastMatch = result
+        activeSkill = ActiveSkill.BROWSE
         return result
     }
 
     fun next(): MatchResult {
         val result = matcher.next(sceneId, lastMatch?.store?.id)
         lastMatch = result
+        activeSkill = ActiveSkill.BROWSE
         return result
     }
 
     fun select(storeId: String): MatchResult {
         val result = matcher.select(sceneId, storeId)
         lastMatch = result
+        activeSkill = ActiveSkill.BROWSE
         return result
     }
 
+    fun recommend(query: String): MatchResult {
+        val result = matcher.recommend(sceneId, query)
+        lastMatch = result
+        activeSkill = ActiveSkill.BROWSE
+        return result
+    }
+
+    fun updateStore(store: Store) {
+        val current = lastMatch ?: return
+        lastMatch = current.copy(
+            store = store,
+            candidates = current.candidates.map { if (it.id == store.id) store else it },
+        )
+    }
+
+    fun startNav(): Boolean {
+        if (lastMatch?.store == null) return false
+        activeSkill = ActiveSkill.NAV
+        return true
+    }
+
+    fun stopNav() {
+        activeSkill = if (lastMatch != null) ActiveSkill.BROWSE else ActiveSkill.NONE
+    }
+
     fun ask(question: String): QaResult {
-        val store = lastMatch?.store ?: look().store
+        val store = lastMatch?.store
+        if (store == null) {
+            return QaResult(
+                question = question,
+                intent = "闲置",
+                answer = "还没选定餐厅。可以说附近火锅，或者说看店。",
+                tts = "还没选定餐厅。可以说附近火锅，或者说看店。",
+            )
+        }
         return qaEngine.ask(store, question)
     }
 }

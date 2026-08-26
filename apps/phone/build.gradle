@@ -62,10 +62,12 @@ tasks.register("fetchVoskModel") {
 }
 dependencies {
     implementation project(":shared")
+    implementation project(":nav-api")
     implementation("com.rokid.cxr:client-l:1.0.3")
     implementation "com.alphacephei:vosk-android:0.3.47"
     def composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation composeBom
+    implementation "androidx.core:core-ktx:1.13.1"
     implementation "androidx.activity:activity-compose:1.9.2"
     implementation "androidx.compose.ui:ui"
     implementation "androidx.compose.ui:ui-tooling-preview"
@@ -86,7 +88,8 @@ afterEvaluate {
                 return
             }
             exec {
-                commandLine "adb", "push", envFile.absolutePath,
+                def serial = System.getenv("ANDROID_SERIAL") ?: "e1109082"
+                commandLine "adb", "-s", serial, "push", envFile.absolutePath,
                     "/sdcard/Android/data/com.glass.dining.phone/files/ai.env"
             }
         }

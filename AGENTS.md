@@ -21,8 +21,8 @@ https://open.rokid.com/sdk
 ## 仓库约定
 
 - 对用户用中文回复。
-- 主应用是 `apps/phone`：`CXRLink`，会话类型 `CUSTOMVIEW`，乐奇包名 `com.rokid.sprite.aiapp`。
-- 镜片 HUD 是 CustomView 绿字短卡片（`HudCard`），不是 480×640 Compose Activity，也不是 AIUI / 灵珠网页。
+- 主应用是 `apps/phone`：到餐 Agent，`CXRLink`，会话类型 `CUSTOMAPP`，乐奇包名 `com.rokid.sprite.aiapp`。`apps/phone-nav` 不是产品入口。
+- 镜片 HUD：闲置/对话是乐奇式「一句口语 + 圆点头像」；门店卡 / 导航条才是四行绿字换皮。默认对话面，不要一进就导航。不是乐奇时速+小地图，也不是 AIUI / 灵珠网页。
 - `apps/glass` 是归档实验，不参与消费版验收。
 - 接口名、回调、常量只引用公开文档或本仓库已验证的 CXR 调用；查不到就明确说文档没有。
 - 人读需求在 `demand.md`；`docs/` 里的企业版整理仍可用作对照。

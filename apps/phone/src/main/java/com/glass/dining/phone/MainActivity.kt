@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.speech.RecognizerIntent
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -43,6 +44,7 @@ class MainActivity : ComponentActivity() {
             viewModel.setStatus(CxrAuth.requestPermissions(this))
         }
         requestNeededPermissions()
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
             PhoneDiningScreen(viewModel)
         }
@@ -76,6 +78,7 @@ class MainActivity : ComponentActivity() {
             }
             if (Build.VERSION.SDK_INT >= 33) {
                 add(Manifest.permission.NEARBY_WIFI_DEVICES)
+                add(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
         permissionLauncher.launch(permissions.toTypedArray())

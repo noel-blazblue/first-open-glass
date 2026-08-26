@@ -4,12 +4,34 @@ import com.glass.dining.shared.model.MatchResult
 import com.glass.dining.shared.model.Store
 
 data class HudCard(
-    val title: String,
+    val title: String = "",
     val meta: String = "",
     val wait: String = "",
     val extra: String = "",
+    val skill: String = "none",
+    val layout: String = LAYOUT_CARD,
+    val speech: String = "",
+    val turn: String = "",
+    val meters: Int = 0,
+    val remaining: Int = 0,
 ) {
+    val isTalk: Boolean
+        get() = layout == LAYOUT_TALK
+    val isNav: Boolean
+        get() = layout == LAYOUT_NAV || skill == "nav"
+
     fun clipped(): HudCard {
+        if (isTalk) {
+            return copy(speech = speech.replace(Regex("[\\r\\n]+"), "").trim().take(SPEECH))
+        }
+        if (isNav) {
+            return copy(
+                title = title.take(LINE),
+                meta = meta.take(LINE),
+                wait = wait.take(LINE),
+                extra = extra.take(LINE),
+            )
+        }
         return copy(
             title = title.take(LINE),
             meta = meta.take(LINE),
@@ -19,24 +41,24 @@ data class HudCard(
     }
 
     fun withExtra(text: String): HudCard {
-        return copy(extra = text.take(LINE))
+        return if (isTalk) {
+            copy(speech = text.take(SPEECH))
+        } else {
+            copy(extra = text.take(LINE))
+        }
     }
 
     companion object {
         const val LINE = 16
-
-        fun fromTalkText(text: String): HudCard {
-            val lines = wrap(text, LINE, 4)
-            return HudCard(
-                title = lines.getOrElse(0) { "听" },
-                meta = lines.getOrElse(1) { "" },
-                wait = lines.getOrElse(2) { "" },
-                extra = lines.getOrElse(3) { "" },
-            ).clipped()
-        }
+        const val SPEECH = 80
+        const val SPEECH_WIDTH = 14
+        const val SPEECH_LINES = 3
+        const val LAYOUT_TALK = "talk"
+        const val LAYOUT_CARD = "card"
+        const val LAYOUT_NAV = "nav"
 
         fun wrap(text: String, width: Int, maxLines: Int): List<String> {
-            val clean = text.replace(Regex("[\\r\\n]+"), "").trim().ifBlank { return listOf("听") }
+            val clean = text.replace(Regex("[\\r\\n]+"), "").trim().ifBlank { return emptyList() }
             val parts = clean.chunked(width)
             if (parts.size <= maxLines) return parts
             val kept = parts.take(maxLines).toMutableList()
@@ -45,49 +67,52 @@ data class HudCard(
             return kept
         }
 
+        fun wrapSpeech(text: String, width: Int = SPEECH_WIDTH, maxLines: Int = SPEECH_LINES): List<String> {
+            val lines = wrap(text.ifBlank { "Hi, 我在听" }, width, maxLines)
+            return if (lines.isEmpty()) listOf("Hi, 我在听") else lines
+        }
+
+        fun talk(speech: String, skill: String = "none"): HudCard {
+            val line = speech.replace(Regex("[\\r\\n]+"), "").trim().ifBlank { "Hi, 我在听" }
+            return HudCard(
+                skill = skill,
+                layout = LAYOUT_TALK,
+                speech = line.take(SPEECH),
+            )
+        }
+
         fun idle(): HudCard {
-            return HudCard(
-                title = "到店餐饮",
-                meta = "点对话才收眼镜语音",
-                wait = "点看店识别拍照",
-            ).clipped()
+            return talk("Hi, 我在听")
         }
 
-        fun listening(match: MatchResult? = null, heard: String = ""): HudCard {
-            if (match != null) {
-                val card = fromStore(match.store)
-                return if (heard.isBlank()) {
-                    card
-                } else {
-                    card.copy(extra = heard.takeLast(LINE)).clipped()
-                }
-            }
-            return HudCard(
-                title = "听",
-                meta = heard.takeLast(LINE).ifBlank { "对着眼镜说话" },
-                wait = if (heard.isBlank()) "我在听" else "",
-                extra = "",
-            ).clipped()
+        fun listening(
+            match: MatchResult? = null,
+            heard: String = "",
+            navCard: HudCard? = null,
+        ): HudCard {
+            if (navCard != null && navCard.skill == "nav") return navCard
+            if (heard.isNotBlank()) return talk(heard)
+            if (match != null) return fromStore(match.store)
+            return talk("Hi, 我在听")
         }
 
-        fun thinking(match: MatchResult? = null, heard: String = ""): HudCard {
-            if (match != null) {
-                return fromStore(match.store).copy(extra = "思考中").clipped()
-            }
-            return HudCard(
-                title = "思考中",
-                meta = heard.take(LINE),
-                wait = "",
-                extra = "",
-            ).clipped()
+        fun thinking(
+            match: MatchResult? = null,
+            heard: String = "",
+            navCard: HudCard? = null,
+        ): HudCard {
+            if (navCard != null && navCard.skill == "nav") return navCard
+            return talk("思考中")
         }
 
-        fun answering(match: MatchResult?, partial: String, done: Boolean): HudCard {
-            if (match != null) {
-                val card = fromStore(match.store)
-                return if (done) card else card.copy(extra = overlayLine(partial)).clipped()
-            }
-            return fromTalkText(partial)
+        fun answering(
+            match: MatchResult?,
+            partial: String,
+            done: Boolean,
+            navCard: HudCard? = null,
+        ): HudCard {
+            if (navCard != null && navCard.skill == "nav") return navCard
+            return talk(partial.ifBlank { if (done) "Hi, 我在听" else "思考中" })
         }
 
         fun talkListening(): HudCard {
@@ -99,28 +124,46 @@ data class HudCard(
         }
 
         fun talkReply(heard: String, hud: String, speak: String): HudCard {
-            return fromTalkText(speak.ifBlank { hud })
+            return talk(speak.ifBlank { hud }.ifBlank { "Hi, 我在听" })
         }
 
         fun shooting(match: MatchResult? = null, current: HudCard? = null): HudCard {
-            val base = match?.let { fromStore(it.store) } ?: (current ?: idle())
-            return base.copy(
-                wait = "正在拍照识别",
-                extra = "请看向店招",
-            ).clipped()
+            if (match != null) {
+                return fromStore(match.store).copy(
+                    wait = "正在拍照识别",
+                    extra = "请看向店招",
+                ).clipped()
+            }
+            if (current != null && !current.isTalk && current.skill == "browse") {
+                return current.copy(
+                    wait = "正在拍照识别",
+                    extra = "请看向店招",
+                ).clipped()
+            }
+            return talk("正在拍照")
         }
 
         fun fromMatch(result: MatchResult): HudCard {
             return fromStore(result.store)
         }
 
-        fun fromStore(store: Store): HudCard {
+        fun fromRecommend(result: MatchResult): HudCard {
+            val others = result.candidates.drop(1).joinToString("、") { it.shortName }
+            val extra = if (others.isBlank()) {
+                "说去哪家"
+            } else {
+                "还有$others"
+            }
+            return fromStore(result.store, extra)
+        }
+
+        fun fromStore(store: Store, extra: String? = null): HudCard {
             val wait = when {
                 !store.openNow -> "现在已打烊"
                 store.waitMinutes <= 0 -> "现在不用排队"
                 else -> "排队约${store.waitMinutes}分钟"
             }
-            val deal = store.deals.firstOrNull()?.let { deal ->
+            val deal = extra ?: store.deals.firstOrNull()?.let { deal ->
                 "团购¥${deal.price} ${deal.title}"
             }.orEmpty()
             return HudCard(
@@ -128,11 +171,44 @@ data class HudCard(
                 meta = "${store.rating}分 · 人均${store.avgPrice}",
                 wait = wait,
                 extra = deal,
+                skill = "browse",
+                layout = LAYOUT_CARD,
             ).clipped()
         }
 
-        private fun overlayLine(text: String): String {
-            return text.replace(Regex("[\\r\\n]+"), "").trim().takeLast(LINE)
+        fun fromNav(
+            storeName: String,
+            turn: String,
+            meters: Int,
+            text: String,
+            extra: String = "",
+            remaining: Int = 0,
+        ): HudCard {
+            val turnLabel = when (turn) {
+                "left" -> "左转"
+                "right" -> "右转"
+                "arrive" -> "到了"
+                else -> "直行"
+            }
+            val meta = if (turn == "arrive" || meters <= 0) {
+                turnLabel
+            } else {
+                "$turnLabel ${meters}米"
+            }
+            val remain = extra.ifBlank {
+                if (turn == "arrive") "可以说取消" else if (remaining > 0) "剩余${remaining}米" else ""
+            }
+            return HudCard(
+                title = "去${storeName.ifBlank { "目的店" }}",
+                meta = meta,
+                wait = text.ifBlank { "跟着走" },
+                extra = remain,
+                skill = "nav",
+                layout = LAYOUT_NAV,
+                turn = turn,
+                meters = meters,
+                remaining = remaining,
+            ).clipped()
         }
     }
 }

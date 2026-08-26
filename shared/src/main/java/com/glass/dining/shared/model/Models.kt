@@ -27,6 +27,8 @@ data class Store(
     val suitable: List<String>,
     val hasPrivateRoom: Boolean,
     val answers: Map<String, String>,
+    val lat: Double = 0.0,
+    val lng: Double = 0.0,
 )
 
 data class Scene(
@@ -43,6 +45,12 @@ data class StoreSummary(
     val category: String,
     val distanceMeters: Int,
 )
+
+enum class ActiveSkill {
+    NONE,
+    BROWSE,
+    NAV,
+}
 
 data class MatchResult(
     val store: Store,

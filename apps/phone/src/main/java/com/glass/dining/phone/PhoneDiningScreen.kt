@@ -50,7 +50,7 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
     ) {
-        Text("到店餐饮", color = HudColors.green, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text("到餐 Agent", color = HudColors.green, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(state.status, color = TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
         if (state.talking && state.asrPartial.isNotBlank()) {
             Text(
@@ -61,11 +61,20 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
             )
         }
         Text(
-            "镜片 HUD 打开后会自动听眼镜语音。点「结束对话」暂停。认店后门店卡留在镜片上，可以接着问排队、团购。",
+            "对话是入口。选定门店后，说走、出发就可以导航。没有「开始导航」按钮。",
             color = TextDim,
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp),
         )
+        if (state.skill.name != "NONE") {
+            Text(
+                "当前技能：${state.skill.name.lowercase()}" +
+                    (state.navHint?.let { " · ${it.text}" } ?: ""),
+                color = HudColors.green,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
         Spacer(Modifier.height(12.dp))
         TalkButton(talking = state.talking) { viewModel.toggleTalk() }
         Spacer(Modifier.height(12.dp))
@@ -90,7 +99,7 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
             modifier = Modifier
                 .padding(top = 8.dp)
                 .fillMaxWidth()
-                .height(200.dp)
+                .height(240.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .border(1.dp, HudColors.green.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
         )
@@ -122,7 +131,7 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
             modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            listOf("排队多久", "招牌菜", "有什么优惠", "人均多少", "有包间吗").forEach { q ->
+            listOf("附近火锅", "不要排队", "去第一家", "出发", "取消导航", "排队多久", "有包间吗").forEach { q ->
                 Chip(q, false) { viewModel.ask(q) }
             }
         }
@@ -131,7 +140,7 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
             value = state.question,
             onValueChange = viewModel::updateQuestion,
             modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("随便问问这家店", color = TextDim) },
+            placeholder = { Text("说想吃什么，或问这家店", color = TextDim) },
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = TextMain,
                 unfocusedTextColor = TextMain,

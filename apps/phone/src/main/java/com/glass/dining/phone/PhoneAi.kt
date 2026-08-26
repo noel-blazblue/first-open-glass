@@ -22,12 +22,19 @@ object PhoneAi {
     private const val DEFAULT_BASE = "https://api.deepseek.com"
     private const val DEFAULT_CHAT = "deepseek-v4-flash"
     private const val DEFAULT_VISION = "deepseek-v4-flash-vision-exp"
-    private const val SYSTEM = """你是乐奇 AI 眼镜上的到店餐饮助手。用口语简短回答，一两句即可。
-直接输出要说给用户听的中文，不要 JSON，不要 markdown，不要标题。
-只有用户想认眼前这家店、看店招、问「这是哪家」、让你看看这家店时，才调用 look_store 拍照。
-如果已经有当前门店，用户只是问排队、菜单、人均、优惠，直接回答，不要拍照。
-调用 look_store 之后，用工具返回的门店数据做一两句口语摘要，不要再说「我看一下」。
-闲聊、听不清、无关餐饮，不要调用 look_store。"""
+    private const val SYSTEM = """你是乐奇 AI 眼镜上的到餐 Agent。用户只跟你说话，你按意图调用技能。用口语简短回答，一两句即可。
+直接输出要说给用户听的中文，不要 JSON，不要 markdown，不要标题。不要教用户说固定口令。
+
+技能规则：
+- 用户想吃什么、附近有什么、不要排队：调用 recommend。
+- 认眼前这家店、看店招、问「这是哪家」：调用 look_store。已经有当前门店且只是问排队/人均/菜单/包间，直接回答，不要拍照。
+- 用户选定一家（第一家、第二家、去某店名）：调用 select_store。若同一句话已经要出发，接着调用 start_nav。
+- 有当前门店、且用户要出发（走、出发、现在去、好、导航、带我去等任意去意）：调用 start_nav。用户说了店名（如去海底捞）时，start_nav 必须带上 name，或先 select_store 再 start_nav。不要把上一张店（例如喜茶）当成目的地。没选店就先 recommend 或追问「去哪家」，禁止空目的开导航。刚推荐还没选店时不要 start_nav。
+- 只是在问排队/人均/包间，不要 start_nav。
+- 取消、到了、换一家：先 stop_nav（如果正在导航），换一家再 recommend。
+- 导航中问店，直接答，不要 stop_nav，也不要再 start_nav。
+- 闲聊、听不清、无关餐饮，不要乱调工具。
+调用工具后，用工具返回的数据做一两句口语；选店后确认店名即可；开始导航说「开始去…」。"""
     private const val VISION_SYSTEM = """你是乐奇 AI 眼镜上的到店餐饮助手。用户拍了眼前画面。
 只输出一个 JSON，不要 markdown：
 {"speak":"口语一两句，不超过80字","hud":"镜片短句，不超过16字","store":"店名或品牌，看不清就空字符串"}"""
@@ -36,6 +43,8 @@ object PhoneAi {
     @Volatile private var baseUrl: String = DEFAULT_BASE
     @Volatile private var chatModel: String = DEFAULT_CHAT
     @Volatile private var visionModel: String = DEFAULT_VISION
+    @Volatile var amapKey: String = ""
+        private set
     private val history = CopyOnWriteArrayList<Pair<String, String>>()
 
     val ready: Boolean
@@ -56,7 +65,7 @@ object PhoneAi {
         for (file in files) {
             if (!file.exists()) continue
             applyEnv(file.readText())
-            Log.i(TAG, "loaded ${file.name} keys token=${token.isNotBlank()} base=$baseUrl model=$chatModel")
+            Log.i(TAG, "loaded ${file.name} keys token=${token.isNotBlank()} amap=${amapKey.isNotBlank()} base=$baseUrl model=$chatModel")
             if (ready) return
         }
         Log.w(TAG, "workspace .env 还没推到手机，或缺少 DEEPSEEK_API_KEY")
@@ -66,7 +75,7 @@ object PhoneAi {
         question: String,
         storeHint: String? = null,
         onDelta: ((String) -> Unit)? = null,
-        onLook: (() -> String)? = null,
+        onTool: ((String, JSONObject) -> String)? = null,
     ): AiReply {
         val text = question.trim()
         if (text.isBlank()) {
@@ -75,10 +84,10 @@ object PhoneAi {
         val prompt = if (storeHint.isNullOrBlank()) {
             text
         } else {
-            "当前门店：$storeHint\n用户：$text"
+            storeHint
         }
         val reply = if (ready) {
-            chat(prompt, onDelta, onLook)
+            chat(prompt, onDelta, onTool)
         } else {
             null
         }
@@ -115,17 +124,17 @@ object PhoneAi {
         return AiReply(speak, heard, false)
     }
 
-    private fun chat(question: String, onDelta: ((String) -> Unit)?, onLook: (() -> String)?): AiReply? {
+    private fun chat(question: String, onDelta: ((String) -> Unit)?, onTool: ((String, JSONObject) -> String)?): AiReply? {
         val messages = JSONArray()
             .put(JSONObject().put("role", "system").put("content", SYSTEM))
         for ((role, content) in history.takeLast(12)) {
             messages.put(JSONObject().put("role", role).put("content", content))
         }
         messages.put(JSONObject().put("role", "user").put("content", question))
-        val tools = if (onLook != null) lookTools() else null
+        val tools = if (onTool != null) diningTools() else null
         val first = completeMessage(chatModel, messages, 25_000, jsonMode = false, tools = tools) ?: return null
         val calls = first.optJSONArray("tool_calls")
-        if (calls != null && calls.length() > 0 && onLook != null) {
+        if (calls != null && calls.length() > 0 && onTool != null) {
             val assistant = JSONObject().put("role", "assistant")
             val content = first.optString("content")
             if (content.isBlank()) {
@@ -134,17 +143,18 @@ object PhoneAi {
                 assistant.put("content", content)
             }
             messages.put(assistant.put("tool_calls", calls))
-            var ranLook = false
-            for (index in 0 until calls.length()) {
-                val call = calls.optJSONObject(index) ?: continue
+            val ordered = orderedToolCalls(calls)
+            for (index in 0 until ordered.length()) {
+                val call = ordered.optJSONObject(index) ?: continue
                 val id = call.optString("id")
-                val name = call.optJSONObject("function")?.optString("name").orEmpty()
-                val result = if (name == "look_store" && !ranLook) {
-                    ranLook = true
-                    Log.i(TAG, "tool look_store")
-                    onLook()
-                } else {
-                    JSONObject().put("ok", false).put("error", "未执行 $name").toString()
+                val fn = call.optJSONObject("function")
+                val name = fn?.optString("name").orEmpty()
+                val args = parseArgs(fn?.optString("arguments"))
+                Log.i(TAG, "tool $name args=$args")
+                val result = try {
+                    onTool(name, args)
+                } catch (error: Exception) {
+                    JSONObject().put("ok", false).put("error", error.message ?: name).toString()
                 }
                 messages.put(
                     JSONObject()
@@ -209,27 +219,67 @@ object PhoneAi {
             ?.optJSONObject("message")
     }
 
-    private fun lookTools(): JSONArray {
-        val parameters = JSONObject()
-            .put("type", "object")
+    private fun diningTools(): JSONArray {
+        return JSONArray()
+            .put(fn("look_store", "用眼镜拍眼前店招并识别是哪家店。仅在用户要认店、看店招、问这是哪家时调用。", JSONObject()
+                .put("type", "object")
+                .put("properties", JSONObject().put("reason", JSONObject().put("type", "string").put("description", "为什么要拍照认店")))))
+            .put(fn("recommend", "按用户口味或条件推荐附近 2～3 家餐厅。用户说附近火锅、不要排队、有什么好吃的时调用。", JSONObject()
+                .put("type", "object")
+                .put("properties", JSONObject()
+                    .put("query", JSONObject().put("type", "string").put("description", "用户的口味或条件，如火锅、不要排队"))
+                    .put("avoid_queue", JSONObject().put("type", "boolean").put("description", "是否只要少排队的店")))))
+            .put(fn("select_store", "从刚才的推荐里选定一家，作为当前门店。用户说第一家、第二家、去某店名时调用。若用户同时要出发，接着调用 start_nav。", JSONObject()
+                .put("type", "object")
+                .put("properties", JSONObject()
+                    .put("index", JSONObject().put("type", "integer").put("description", "1 表示第一家，2 第二家，3 第三家"))
+                    .put("name", JSONObject().put("type", "string").put("description", "店名或简称"))
+                    .put("store_id", JSONObject().put("type", "string").put("description", "门店 id")))))
+            .put(fn("start_nav", "开始到店步行导航。用户要去某家店或出发时调用。若用户说了店名，传入 name。没选店且没给店名时不要调用。", JSONObject()
+                .put("type", "object")
+                .put("properties", JSONObject()
+                    .put("name", JSONObject().put("type", "string").put("description", "目的店名，如海底捞"))
+                    .put("store_id", JSONObject().put("type", "string").put("description", "门店 id"))
+                    .put("index", JSONObject().put("type", "integer").put("description", "1 第一家，2 第二家")))))
+            .put(fn("stop_nav", "停止导航技能。用户说取消、到了、换一家时调用。", JSONObject()
+                .put("type", "object")
+                .put("properties", JSONObject())))
+    }
+
+    private fun fn(name: String, description: String, parameters: JSONObject): JSONObject {
+        return JSONObject()
+            .put("type", "function")
             .put(
-                "properties",
-                JSONObject().put(
-                    "reason",
-                    JSONObject()
-                        .put("type", "string")
-                        .put("description", "为什么要拍照认店"),
-                ),
+                "function",
+                JSONObject()
+                    .put("name", name)
+                    .put("description", description)
+                    .put("parameters", parameters),
             )
-        val function = JSONObject()
-            .put("name", "look_store")
-            .put("description", "用眼镜拍眼前店招并识别是哪家店。仅在用户要认店、看店招、问这是哪家时调用。")
-            .put("parameters", parameters)
-        return JSONArray().put(
-            JSONObject()
-                .put("type", "function")
-                .put("function", function),
+    }
+
+    private fun orderedToolCalls(calls: JSONArray): JSONArray {
+        val rank = mapOf(
+            "stop_nav" to 0,
+            "look_store" to 1,
+            "recommend" to 2,
+            "select_store" to 3,
+            "start_nav" to 4,
         )
+        val list = (0 until calls.length()).mapNotNull { calls.optJSONObject(it) }
+            .sortedBy { rank[it.optJSONObject("function")?.optString("name")] ?: 9 }
+        val ordered = JSONArray()
+        list.forEach { ordered.put(it) }
+        return ordered
+    }
+
+    private fun parseArgs(raw: String?): JSONObject {
+        if (raw.isNullOrBlank()) return JSONObject()
+        return try {
+            JSONObject(raw)
+        } catch (_: Exception) {
+            JSONObject()
+        }
     }
 
     private fun streamChat(messages: JSONArray, onDelta: ((String) -> Unit)?, tools: JSONArray? = null): AiReply? {
@@ -355,6 +405,7 @@ object PhoneAi {
                 "DEEPSEEK_BASE_URL" -> baseUrl = value.trimEnd('/')
                 "DEEPSEEK_MODEL", "DEEPSEEK_CHAT_MODEL" -> chatModel = value
                 "DEEPSEEK_VISION_MODEL" -> visionModel = value
+                "AMAP_WEB_KEY", "AMAP_KEY" -> amapKey = value
                 "OPENAI_API_KEY" -> if (token.isBlank()) token = value
                 "OPENAI_BASE_URL" -> if (baseUrl == DEFAULT_BASE) baseUrl = value.trimEnd('/')
                 "OPENAI_MODEL" -> if (chatModel == DEFAULT_CHAT) chatModel = value

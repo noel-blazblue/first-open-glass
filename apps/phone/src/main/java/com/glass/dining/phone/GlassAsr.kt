@@ -21,9 +21,10 @@ import kotlin.math.sqrt
 object GlassAsr {
     private const val TAG = "GlassDiningPhone"
     const val SAMPLE_RATE = 16_000
-    private const val MAX_UTTER_MS = 8_000L
-    private const val MIN_UTTER_MS = 1_200L
-    private const val SILENCE_FRAMES = 10
+    private const val MAX_UTTER_MS = 12_000L
+    private const val MIN_UTTER_MS = 1_500L
+    private const val ENDPOINT_SILENCE_MS = 1_800L
+    private const val PARTIAL_HOLD_MS = 500L
     private const val ASSET_ZIP = "asr/vosk-model-small-cn-0.22.zip"
 
     var onPartial: ((String) -> Unit)? = null
@@ -31,6 +32,10 @@ object GlassAsr {
     var onError: ((String) -> Unit)? = null
 
     @Volatile var muted: Boolean = false
+
+    fun holdForTts() {
+        muted = true
+    }
 
     private val main = Handler(Looper.getMainLooper())
     private val modelLock = Any()
@@ -97,13 +102,14 @@ object GlassAsr {
             val rec = recognizer ?: return
             var noise = 80.0
             var inSpeech = false
-            var silence = 0
             var speechStartedAt = 0L
+            var lastVoiceAt = 0L
+            var lastPartialAt = 0L
             var bestPartial = ""
             var pending = ByteArray(0)
             while (running.get()) {
                 val chunk = incoming.poll(80, TimeUnit.MILLISECONDS) ?: continue
-                if (muted) {
+                if (muted || PhoneTts.speaking) {
                     if (inSpeech) {
                         inSpeech = false
                         rec.reset()
@@ -119,52 +125,44 @@ object GlassAsr {
                 } else {
                     pending = ByteArray(0)
                 }
+                val now = System.currentTimeMillis()
                 val level = rms(shorts)
-                val ttsPlaying = PhoneTts.speaking
-                val threshold = if (ttsPlaying) {
-                    max(noise * 2.4, 420.0)
-                } else {
-                    max(noise * 1.55, 180.0)
-                }
+                val startThr = max(noise * 1.55, 180.0)
+                val holdThr = max(noise * 1.15, 110.0)
                 if (!inSpeech) {
                     if (level < 20) continue
-                    if (!ttsPlaying) {
-                        noise = noise * 0.94 + level * 0.06
-                    }
-                    if (level < threshold) continue
-                    if (ttsPlaying) {
-                        Log.i(TAG, "glass asr barge-in rms=${level.toInt()} thr=${threshold.toInt()}")
-                        main.post { PhoneTts.stop() }
-                    }
+                    noise = noise * 0.94 + level * 0.06
+                    if (level < startThr) continue
                     inSpeech = true
-                    silence = 0
                     bestPartial = ""
-                    speechStartedAt = System.currentTimeMillis()
+                    speechStartedAt = now
+                    lastVoiceAt = now
+                    lastPartialAt = now
                     rec.reset()
-                    Log.i(TAG, "glass asr speech start rms=${level.toInt()} thr=${threshold.toInt()}")
+                    Log.i(TAG, "glass asr speech start rms=${level.toInt()} thr=${startThr.toInt()}")
                 }
                 rec.acceptWaveForm(shorts, shorts.size)
                 val partial = parsePartial(rec.partialResult)
                 if (partial.length > bestPartial.length) {
                     bestPartial = partial
+                    lastPartialAt = now
                 }
                 if (partial.isNotBlank()) {
                     main.post { onPartial?.invoke(partial) }
                 }
-                if (level < threshold) {
-                    silence += 1
-                } else {
-                    silence = 0
+                if (level >= holdThr) {
+                    lastVoiceAt = now
                 }
-                val elapsed = System.currentTimeMillis() - speechStartedAt
-                val finished = elapsed >= MIN_UTTER_MS && silence >= SILENCE_FRAMES
+                val elapsed = now - speechStartedAt
+                val quietLongEnough = now - lastVoiceAt >= ENDPOINT_SILENCE_MS
+                val partialSettled = now - lastPartialAt >= PARTIAL_HOLD_MS
+                val finished = elapsed >= MIN_UTTER_MS && quietLongEnough && partialSettled
                 val tooLong = elapsed > MAX_UTTER_MS
                 if (!tooLong && !finished) continue
                 val finalText = parseText(rec.finalResult)
                 val text = listOf(finalText, bestPartial, partial).maxBy { it.length }
-                Log.i(TAG, "glass asr text=$text")
+                Log.i(TAG, "glass asr text=$text quiet=${now - lastVoiceAt}ms")
                 inSpeech = false
-                silence = 0
                 bestPartial = ""
                 if (text.isNotBlank()) {
                     muted = true

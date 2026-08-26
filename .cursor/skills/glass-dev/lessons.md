@@ -1,3 +1,35 @@
+## 2026-08-26 — 用户话没说完就被收句
+
+- 场景：对着眼镜说话，中间停顿一下，后半句还没出口系统已经开始处理。
+- 误判：Vosk 识别太快；或用户说完了。
+- 根因：眼镜 PCM 约 100ms 一包，满 10 包低于阈值就收句，大约 1 秒。中文停顿常超过这个长度。轻声也会被当成静音。
+- 以后先做：按真实时间 endpoint，静音约 1.8s 且 partial 停 0.5s 再收句；句中用更低的 hold 阈值。
+- 不要做：用固定包数当句末；把低于说话阈值的轻声直接当静音。
+
+## 2026-08-26 — TTS 被眼镜麦听回去，AI 会自己打断自己
+
+- 场景：到餐 Agent 正在播回复，话说到一半突然停下，又当成用户说了一句，再进一轮。
+- 误判：模型自己截断；或 Vosk 误识别。
+- 根因：LLM 一结束 `ask()` 的 `finally` 就把 `GlassAsr.muted=false`，TTS 还在播。眼镜麦收到手机喇叭。旧代码还把这段当 barge-in 去 `PhoneTts.stop()`。`QUEUE_FLUSH` 的旧 `onDone` 也会提前 unmute。
+- 以后先做：TTS 期间保持 mute；只认当前 utterance id 的 `onDone`；播完再延迟约 700ms unmute。TTS 播放中丢掉 PCM，不要抢话停 TTS。
+- 不要做：模型返回后立刻开麦；用 RMS 阈值在 TTS 期间 barge-in。
+
+## 2026-08-26 — CustomApp 里 startAudioStream 会静默失败
+
+- 场景：到餐切 `CUSTOMAPP` 后点对话，镜片闲置卡在，说话没反应。状态一闪「startAudioStream 未发出」随后变成「镜片到餐页在前台」。
+- 误判：乐奇没勾麦克风；或 `hasGlassPermission(MICROPHONE)` 为 false。
+- 根因：`AuthorizationHelper` 已是 true。CXR-L `startAudioStream(1)` 仍返回 false（媒体通道在 CustomApp 下发不出去）。`onGlassAppResume` 又把失败文案盖掉。对话 `talking=true`，但没有 PCM，Vosk 无输入。
+- 以后先做：CustomApp 用眼镜 `AudioRecord` 16 kHz mono，经 `mic.on` / `pcm` Caps 送到手机 Vosk。`adb shell pm grant com.glass.nav.glass android.permission.RECORD_AUDIO`。不要用 resume 文案覆盖收声失败。
+- 不要做：CustomApp 会话里把 CXR-L `startAudioStream` 当眼镜麦；看到「到餐页在前台」就当已经在听。
+
+## 2026-08-26 — 小米拦截新包 USB 安装
+
+- 场景：眼镜 APK `adb install` 成功，新包 `com.glass.nav.phone` 报 `INSTALL_FAILED_USER_RESTRICTED`。
+- 误判：签名不对、要 `-g`、或 `pm install --user 0` 能绕过。
+- 根因：MIUI「应用安装拦截」拦住了 USB 装的「室内导航」。通知文案：已拦截通过USB安装的室内导航。
+- 以后先做：让用户在通知里允许这次安装，再 `adb install -r`。已装过的旧包更新一般不会拦。
+- 不要做：对着 `USER_RESTRICTED` 换 install 参数空转。
+
 ## 2026-08-25 — Vosk 模型打进 APK，adb push 到 Android/data 看不见
 
 - 场景：重装后点对话提示没有语音模型；`adb ls` 却能看到 `asr/vosk-model-small-cn-0.22`。

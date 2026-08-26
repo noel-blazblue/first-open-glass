@@ -24,5 +24,8 @@ dependencyResolutionManagement {
 
 rootProject.name = "glass-dining"
 include ":shared"
+include ":nav-api"
 include ":apps:glass"
 include ":apps:phone"
+include ":apps:glass-nav"
+include ":apps:phone-nav"

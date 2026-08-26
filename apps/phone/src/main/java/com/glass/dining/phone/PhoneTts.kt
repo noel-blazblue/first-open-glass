@@ -5,7 +5,6 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import java.util.Locale
-import java.util.concurrent.atomic.AtomicInteger
 
 object PhoneTts {
     private const val TAG = "GlassDiningPhone"
@@ -15,7 +14,7 @@ object PhoneTts {
     @Volatile var speaking: Boolean = false
         private set
     var onIdle: (() -> Unit)? = null
-    private val inflight = AtomicInteger(0)
+    @Volatile private var activeId: String = ""
     private var seq: Int = 0
 
     fun init(context: Context) {
@@ -30,16 +29,17 @@ object PhoneTts {
                 }
                 engine?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
+                        if (utteranceId != activeId) return
                         speaking = true
                     }
 
                     override fun onDone(utteranceId: String?) {
-                        markIdleIfClear()
+                        finishIfCurrent(utteranceId)
                     }
 
                     @Deprecated("Deprecated in Java")
                     override fun onError(utteranceId: String?) {
-                        markIdleIfClear()
+                        finishIfCurrent(utteranceId)
                     }
                 })
                 Log.i(TAG, "phone TTS ready")
@@ -67,38 +67,33 @@ object PhoneTts {
             pending = spoken
             return
         }
-        speaking = true
-        if (flush) {
-            inflight.set(1)
-        } else {
-            inflight.incrementAndGet()
-        }
         seq += 1
+        val id = "dining-ai-$seq"
+        activeId = id
+        speaking = true
+        GlassAsr.holdForTts()
         val mode = if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-        engine.speak(spoken, mode, null, "dining-ai-$seq")
+        engine.speak(spoken, mode, null, id)
     }
 
-    private fun markIdleIfClear() {
-        if (inflight.decrementAndGet() > 0) return
-        inflight.set(0)
+    private fun finishIfCurrent(utteranceId: String?) {
+        if (utteranceId != activeId) return
         speaking = false
-        GlassAsr.muted = false
         onIdle?.invoke()
     }
 
     fun stop() {
+        activeId = ""
         tts?.stop()
-        inflight.set(0)
         speaking = false
-        GlassAsr.muted = false
     }
 
     fun shutdown() {
+        activeId = ""
         tts?.stop()
         tts?.shutdown()
         tts = null
         ready = false
         speaking = false
-        inflight.set(0)
     }
 }
