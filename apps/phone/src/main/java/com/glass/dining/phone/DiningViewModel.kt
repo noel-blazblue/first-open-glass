@@ -21,13 +21,13 @@ import com.glass.dining.phone.agent.ToolRegistry
 import com.glass.dining.phone.agent.VisionToolProvider
 import com.glass.dining.phone.link.LinkUiState
 import com.glass.dining.phone.link.VisionLinkCoordinator
+import com.glass.dining.phone.indoor.IndoorNavCoordinator
 import com.glass.dining.phone.nav.AmapWalking
 import com.glass.dining.phone.nav.GeoPoint
 import com.glass.dining.phone.nav.NavLocationService
 import com.glass.dining.phone.nav.PhoneGps
 import com.glass.dining.phone.nav.StorePins
 import com.glass.dining.phone.nav.WalkGuide
-import com.glass.dining.phone.nav.toNavHint
 import com.glass.dining.shared.agent.AgentContextAssembler
 import com.glass.dining.shared.agent.EnvironmentMerge
 import com.glass.dining.shared.agent.EnvironmentStore
@@ -88,6 +88,7 @@ data class PhoneUiState(
     val rtcOn: Boolean = false,
     val rtcLine: String = "",
     val agentContext: String = "",
+    val agentDebug: String = "",
     val link: LinkUiState = LinkUiState(),
 )
 
@@ -113,7 +114,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile private var selectedThisTurn: Boolean = false
     @Volatile private var announcedArrive: Boolean = false
     @Volatile private var lastRerouteAt: Long = 0
-    private val landmarks = LandmarkPlanner()
+    private val indoor = IndoorNavCoordinator()
     @Volatile private var lastLandmarkStage: String = ""
     @Volatile private var spokenFloor: String = ""
     @Volatile private var capturing: Boolean = false
@@ -166,7 +167,16 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         CxrLinkHost.onGlassReady = { link.onGlassReady() }
         CxrLinkHost.onFrame = { CxrLinkHost.ackFrame() }
         CxrLinkHost.onRtc = { cmd, json -> link.onRtc(cmd, json) }
-        CxrLinkHost.onPose = { pose -> EnvironmentWatcher.onHeading(pose.yaw) }
+        CxrLinkHost.onPose = { pose ->
+            EnvironmentWatcher.onPose(pose)
+            indoor.onPose(pose)
+        }
+        PhoneRtc.onPose = { pose ->
+            EnvironmentWatcher.onPose(pose)
+            indoor.onPose(pose)
+        }
+        EnvironmentWatcher.onSemantic = { episode, look, raw -> indoor.onSemantic(episode, look, raw) }
+        EnvironmentWatcher.onCommitted = { main.post { publishAgentContext() } }
         PhoneRtc.onSignal = { cmd, json -> CxrLinkHost.sendRtc(cmd, json) }
         PhoneRtc.onStatus = { line ->
             link.onRtcStatus(line)
@@ -218,6 +228,9 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         CxrLinkHost.onFrame = null
         CxrLinkHost.onRtc = null
         CxrLinkHost.onPose = null
+        PhoneRtc.onPose = null
+        EnvironmentWatcher.onSemantic = null
+        EnvironmentWatcher.onCommitted = null
         PhoneRtc.onSignal = null
         PhoneRtc.onStatus = null
         PhoneP2p.onStatus = null
@@ -264,7 +277,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     private fun maybeLandmarkNav(frame: StreamFrame) {
         if (session.activeSkill != ActiveSkill.NAV) return
         val store = session.currentStore ?: return
-        if (!frame.extract.quality.ok && landmarks.stage == LandmarkStage.OUTDOOR) return
+        if (!frame.extract.quality.ok && indoor.landmarks.stage == LandmarkStage.OUTDOOR) return
         val gpsHint = _ui.value.navHint
         val remaining = gpsHint?.remaining ?: WalkGuide.current()?.distance ?: 0
         val gpsArrive = gpsHint?.turn == "arrive"
@@ -276,7 +289,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             gpsAccuracyM = PhoneGps.lastAccuracyM,
             spokenFloor = EnvironmentStore.snapshot().usableFloor.ifBlank { spokenFloor },
         )
-        val visual = landmarks.observe(
+        val visual = indoor.observe(
             extract = frame.extract,
             goal = LandmarkPlanner.goalOf(store),
             gpsRemaining = remaining,
@@ -284,18 +297,18 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             world = world,
         )
         if (visual == null) {
-            if (landmarks.stage == LandmarkStage.OUTDOOR) {
+            if (indoor.landmarks.stage == LandmarkStage.OUTDOOR) {
                 viewModelScope.launch(Dispatchers.IO) { ensureOutdoorRoute() }
             }
             return
         }
-        val hint = visual.toNavHint()
+        val hint = visual
         main.post {
             publishNavHint(hint)
-            val stage = landmarks.stage.name
+            val stage = indoor.landmarks.stage.name
             if (stage != lastLandmarkStage) {
                 lastLandmarkStage = stage
-                Log.i(TAG, "landmark stage=$stage mode=${hint.mode} text=${hint.text}")
+                Log.i(TAG, "indoor stage=$stage mode=${hint.mode} nodes=${indoor.liveMap().nodes.size} text=${hint.text}")
                 if (hint.turn != "arrive" && hint.text.isNotBlank()) {
                     PhoneTts.speak(hint.text)
                 }
@@ -305,7 +318,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun ensureOutdoorRoute() {
         if (session.activeSkill != ActiveSkill.NAV) return
-        if (landmarks.stage != LandmarkStage.OUTDOOR) return
+        if (indoor.landmarks.stage != LandmarkStage.OUTDOOR) return
         if (WalkGuide.current() != null) return
         val origin = PhoneGps.last ?: return
         val store = session.currentStore ?: return
@@ -858,7 +871,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         if (session.currentStore == null) {
             return JSONObject()
                 .put("ok", false)
-                .put("error", "还没选定门店，先认店再扫券")
+                .put("error", "还没确认要服务的门店，先认店再扫券")
                 .put("vision_source", source)
                 .toString()
         }
@@ -1089,7 +1102,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun startNavInternal(spoken: String = spokenFloor): String? {
-        val store0 = session.currentStore ?: return "还没选定门店"
+        val store0 = session.currentStore ?: return "还没确定导航目的地"
         val app = getApplication<Application>()
         val goal = LandmarkPlanner.goalOf(store0)
         val dest = StorePins.destOf(store0)
@@ -1113,11 +1126,11 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             null
         }
-        if (!session.startNav()) return "还没选定门店"
+        if (!session.startNav()) return "还没确定导航目的地"
         announcedArrive = false
         lastRerouteAt = 0
         lastLandmarkStage = ""
-        landmarks.start(goal, gpsUsable = outdoorFix, spokenFloor = spoken)
+        indoor.start(goal, gpsUsable = outdoorFix, spokenFloor = spoken)
         if (spoken.isNotBlank()) spokenFloor = LandmarkSignage.normalizeFloor(spoken).ifBlank { spokenFloor }
         WalkGuide.clear()
         if (route != null) WalkGuide.set(route)
@@ -1138,7 +1151,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 remaining = remaining,
             )
         } else {
-            landmarks.bootstrapHint(goal, remaining).toNavHint()
+            indoor.bootstrapHint(goal, remaining)
         }
         val card = navHud(hint)
         main.post {
@@ -1164,7 +1177,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         PhoneGps.onUpdate = null
         WalkGuide.clear()
         announcedArrive = false
-        landmarks.reset()
+        indoor.reset()
         lastLandmarkStage = ""
         try {
             NavLocationService.stop(getApplication())
@@ -1196,8 +1209,8 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             maybeReroute(point)
             val hint = WalkGuide.update(point) ?: return@launch
-            val visualActive = landmarks.stage != LandmarkStage.OUTDOOR &&
-                landmarks.stage != LandmarkStage.ARRIVED
+            val visualActive = indoor.landmarks.stage != LandmarkStage.OUTDOOR &&
+                indoor.landmarks.stage != LandmarkStage.ARRIVED
             if (visualActive) {
                 val current = _ui.value.navHint
                 if (current != null && current.visual) {
@@ -1213,7 +1226,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun maybeReroute(point: GeoPoint) {
-        if (landmarks.stage != LandmarkStage.OUTDOOR) return
+        if (indoor.landmarks.stage != LandmarkStage.OUTDOOR) return
         if (!WalkGuide.offRoute(point)) return
         val now = SystemClock.uptimeMillis()
         if (now - lastRerouteAt < 8_000) return
@@ -1255,6 +1268,9 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             headingDeg = hint.headingDeg,
             elevationDeg = hint.elevationDeg,
             stage = hint.stage,
+            sessionId = hint.sessionId,
+            tracking = hint.tracking,
+            waypoints = hint.waypoints,
         )
     }
 
@@ -1285,32 +1301,38 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun publishAgentContext() {
-        val text = AgentContextAssembler.format(worldContext())
-        if (text == _ui.value.agentContext) return
-        _ui.update { it.copy(agentContext = text) }
+        val world = worldContext()
+        val text = AgentContextAssembler.format(world)
+        val debug = AgentContextAssembler.debug(world)
+        if (text == _ui.value.agentContext && debug == _ui.value.agentDebug) return
+        _ui.update { it.copy(agentContext = text, agentDebug = debug) }
     }
 
     private fun worldContext(): WorldContext {
         val store = session.currentStore
         val gps = PhoneGps.last
         val env = EnvironmentStore.snapshot()
+        val disambiguation = session.candidates.map { PlaceResolver.fromStore(it) }
+        val search = cachedPlaces.filter { place -> disambiguation.none { it.id == place.id } }
         return WorldContext(
             skill = session.activeSkill.name.lowercase(),
-            currentPlace = store?.let { PlaceResolver.fromStore(it) },
-            candidates = (session.candidates.map { PlaceResolver.fromStore(it) } + cachedPlaces).distinctBy { it.id },
+            boundPlace = store?.let { PlaceResolver.fromStore(it) },
+            disambiguation = disambiguation,
+            recentSearch = search,
             observation = latestObservation,
-            hasGps = PhoneGps.hasPermission(getApplication()),
+            gpsPermission = PhoneGps.hasPermission(getApplication()),
+            hasGpsFix = gps != null && (kotlin.math.abs(gps.lat) > 1e-6 || kotlin.math.abs(gps.lng) > 1e-6),
             gpsLat = gps?.lat,
             gpsLng = gps?.lng,
             catalogCount = session.catalog.stores().size,
             pendingPay = session.pendingPay?.let { "待付${it.amount}元给${it.storeName}" }.orEmpty(),
             pendingCoupon = session.pendingCoupon?.title.orEmpty(),
             spokenFloor = spokenFloor,
-            currentFloor = env.usableFloor.ifBlank { spokenFloor },
             environment = env,
             navActive = session.activeSkill == ActiveSkill.NAV,
             modelReady = PhoneAi.ready,
             capabilities = listOf("问答", "看环境", "搜附近", "导航", "到餐增强", "演示支付"),
+            navArrived = _ui.value.navHint?.turn == "arrive",
         )
     }
 

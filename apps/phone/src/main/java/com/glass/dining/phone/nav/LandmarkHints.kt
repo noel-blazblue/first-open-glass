@@ -14,5 +14,8 @@ fun LandmarkHint.toNavHint(): NavHint {
         headingDeg = headingDeg,
         elevationDeg = elevationDeg,
         stage = stage,
+        sessionId = sessionId,
+        tracking = tracking,
+        waypoints = waypoints,
     )
 }

@@ -52,7 +52,7 @@ class VisionToolProvider(private val world: PhoneWorld) {
                 .put("environment", true)
                 .put("floor", env.usableFloor)
                 .put("is_store_fact", false)
-                .put("message", env.promptBlock())
+                .put("message", env.currentBrief.ifBlank { "眼前环境已有记录，不是门店事实。" })
                 .put("hint", "环境记忆不是门店事实")
                 .toString()
         }

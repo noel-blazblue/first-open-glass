@@ -68,10 +68,10 @@ class EnvironmentMergeTest {
         )
         val withSpeech = EnvironmentMerge.fromSpeech("我在7楼", env, 2)
         val text = AgentContextAssembler.format(WorldContext(environment = withSpeech))
-        assertTrue(text.contains("【当前环境】"))
+        assertTrue(text.contains("【当前视野】"))
         assertTrue(text.contains("服务台"))
-        assertTrue(text.contains("【最近变化】"))
-        assertTrue(text.contains("【用户确认】"))
+        assertTrue(text.contains("【用户所在】"))
+        assertTrue(text.contains("用户确认"))
         assertTrue(withSpeech.usableFloor == "7")
     }
 
@@ -87,6 +87,32 @@ class EnvironmentMergeTest {
         val env = EnvironmentMerge.fromLook(look, EnvironmentState(), 1)
         assertEquals("办公桌上的电脑", env.currentBrief)
         assertEquals("", env.usableFloor)
+    }
+
+    @Test
+    fun parseLookReadsNestedObservationNavigationProposal() {
+        val look = EnvironmentMerge.parseLook(
+            """
+            {"observation":{"sceneBrief":"打印机正在出纸","change":"刚走到打印机旁","objects":["打印机"],"actions":["等待"],"location":"文印角落","observedClaims":[{"id":"c1","text":"桌上有打印机","evidence":"scene"}]},"navigation":{"spaceType":"corridor","guideDir":"ahead","storeNames":[],"blocked":false,"floorCandidate":"","floorEvidence":""},"eventProposal":{"operation":"start","eventSummary":"在打印文件","evidenceLevel":"observed","relations":[]},"confidence":0.82}
+            """.trimIndent(),
+        )
+        assertEquals("打印机正在出纸", look.sceneBrief)
+        assertEquals("文印角落", look.location)
+        assertEquals("corridor", look.spaceType)
+        assertEquals("在打印文件", look.eventProposal?.summary)
+        assertEquals(EventReducer.OP_START, look.eventProposal?.operation)
+        assertEquals("桌上有打印机", look.observedClaims.single().text)
+    }
+
+    @Test
+    fun parseLookReadsSpaceTypeAndGuide() {
+        val look = EnvironmentMerge.parseLook(
+            """{"sceneBrief":"走廊分叉","placeHint":"corridor","spaceType":"junction","guideDir":"right","storeNames":["餐饮"],"blocked":false,"confidence":0.7}""",
+        )
+        assertEquals("junction", look.spaceType)
+        assertEquals("right", look.guideDir)
+        assertEquals(listOf("餐饮"), look.storeNames)
+        assertFalse(look.blocked)
     }
 
     @Test
@@ -114,14 +140,32 @@ class EnvironmentMergeTest {
     }
 
     @Test
-    fun twoOcrHitsPromoteFloorSign() {
+    fun salientTextRecoversFloorWithoutWritingScene() {
+        val env = EnvironmentMerge.fromLook(
+            EnvironmentLook(
+                sceneBrief = "墙面上的导视牌",
+                salientText = "7层 导览",
+                spaceType = "signage",
+                confidence = 0.5f,
+            ),
+            EnvironmentState(),
+            1,
+        )
+        assertEquals("墙面上的导视牌", env.currentBrief)
+        assertEquals("7", env.usableFloor)
+        assertTrue(env.promptBlock().contains("楼层标识=7"))
+        assertTrue(env.promptBlock().contains("可见文字=7层 导览"))
+    }
+
+    @Test
+    fun oneClearOcrHitIsObservedFloor() {
         val next = EnvironmentMerge.fromSignage(
-            listOf("7层 导览", "7F 电梯"),
+            listOf("7层 导览"),
             EnvironmentState(),
             3,
         )
         assertEquals("7", next.usableFloor)
-        assertEquals(EnvironmentObservation.KIND_FLOOR, next.recentObservations.first().kind)
+        assertEquals(EnvironmentObservation.STATUS_OBSERVED, next.recentObservations.first().status)
     }
 
     @Test

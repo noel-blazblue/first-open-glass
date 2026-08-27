@@ -15,7 +15,7 @@ class CommerceToolProvider(private val world: PhoneWorld) {
 
     private fun listCoupons(): String {
         if (world.session.currentStore == null) {
-            return JSONObject().put("ok", false).put("error", "还没选定门店，先认店或推荐").toString()
+            return JSONObject().put("ok", false).put("error", "还没确认要服务的门店，先认店或推荐").toString()
         }
         if (!world.session.currentStore!!.catalogBacked) {
             return JSONObject().put("ok", false).put("error", "公开地点没有券数据").toString()
@@ -35,7 +35,7 @@ class CommerceToolProvider(private val world: PhoneWorld) {
 
     private fun redeem(args: JSONObject): String {
         if (world.session.currentStore == null) {
-            return JSONObject().put("ok", false).put("error", "还没选定门店").toString()
+            return JSONObject().put("ok", false).put("error", "还没确认要服务的门店").toString()
         }
         if (world.session.lastCoupons.isEmpty()) {
             world.session.listCoupons()

@@ -394,6 +394,9 @@ object CxrLinkHost {
                     clipped.headingDeg,
                     clipped.elevationDeg,
                     clipped.stage,
+                    clipped.sessionId,
+                    clipped.tracking,
+                    clipped.waypoints,
                 ),
             )
             Log.i(TAG, "hud.card layout=${clipped.layout} skill=${clipped.skill} title=${clipped.title}")

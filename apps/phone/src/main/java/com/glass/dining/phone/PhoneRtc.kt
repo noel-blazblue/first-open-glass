@@ -41,6 +41,7 @@ object PhoneRtc {
 
     var onSignal: ((String, String?) -> Unit)? = null
     var onStatus: ((String) -> Unit)? = null
+    var onPose: ((com.glass.dining.shared.nav.NavPose) -> Unit)? = null
 
     private val main = Handler(Looper.getMainLooper())
     private val sdpParts = NavProtocol.SdpAssembler()
@@ -58,6 +59,7 @@ object PhoneRtc {
     private var remoteSet: Boolean = false
     @Volatile private var initialized: Boolean = false
     private val sink = ProxySink()
+    private val poseChannel = RtcPoseChannel()
     private val latestLock = Any()
     private var latestFrame: VideoFrame? = null
     @Volatile private var lastFrameAt: Long = 0
@@ -213,6 +215,8 @@ object PhoneRtc {
                 MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
                 RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
             )
+            poseChannel.onPose = { pose -> onPose?.invoke(pose) }
+            poseChannel.openOn(peer)
             pc = peer
             active = true
             frames.set(0)
@@ -231,6 +235,8 @@ object PhoneRtc {
         pendingIce.clear()
         StreamVision.stop()
         releaseLatestFrame()
+        poseChannel.onPose = null
+        poseChannel.release()
         try {
             remoteTrack?.removeSink(sink)
         } catch (_: Exception) {

@@ -10,11 +10,13 @@ import android.view.WindowManager
 import com.glass.dining.shared.nav.HudLines
 import com.glass.dining.shared.nav.NavHint
 import com.glass.dining.shared.nav.NavProtocol
+import com.glass.nav.glass.spatial.SpatialHost
 
 class NavActivity : android.app.Activity() {
     private val main = Handler(Looper.getMainLooper())
     private lateinit var hud: NavHudView
     private lateinit var imu: ImuTracker
+    private lateinit var spatial: SpatialHost
     private lateinit var camera: NavCamera
     private lateinit var mic: GlassMic
     private lateinit var bridge: NavBridge
@@ -27,6 +29,8 @@ class NavActivity : android.app.Activity() {
     private val drawTick = object : Runnable {
         override fun run() {
             hud.pitchDeg = imu.pitchDegrees
+            hud.pose = spatial.pose()
+            hud.quality = spatial.quality()
             hud.invalidate()
             val gap = if (hud.card.visual) 50L else 200L
             main.postDelayed(this, gap)
@@ -36,24 +40,20 @@ class NavActivity : android.app.Activity() {
     private val poseTick = object : Runnable {
         override fun run() {
             maybeSendPose()
-            main.postDelayed(this, 1_000)
+            val gap = if (GlassRtc.poseOpen) NavProtocol.POSE_WIFI_TICK_MS else 1_000L
+            main.postDelayed(this, gap)
         }
     }
 
-    private var lastPoseYaw: Float = 0f
-    private var sentPose: Boolean = false
-
     private fun maybeSendPose() {
-        if (wantMic) return
-        if (!navActive && !hud.card.isNav) return
-        val yaw = imu.yawDegrees
-        var delta = yaw - lastPoseYaw
-        while (delta > 180f) delta -= 360f
-        while (delta < -180f) delta += 360f
-        if (sentPose && kotlin.math.abs(delta) < 12f) return
-        lastPoseYaw = yaw
-        sentPose = true
-        bridge.sendPose(imu.pose)
+        if (GlassRtc.poseOpen) {
+            if (spatial.shouldSendWifi()) {
+                GlassRtc.sendPose(spatial.navPose())
+            }
+            return
+        }
+        if (!spatial.shouldSendCxr(wantMic, navActive || hud.card.isNav)) return
+        bridge.sendPose(spatial.navPose())
     }
 
     private val captureTick = object : Runnable {
@@ -91,6 +91,8 @@ class NavActivity : android.app.Activity() {
             hud.invalidate()
         }
         imu = ImuTracker(this)
+        spatial = SpatialHost(this)
+        hud.occupancy = spatial.occupancy
         camera = NavCamera(this)
         mic = GlassMic(this)
         camera.onJpeg = { bytes ->
@@ -111,17 +113,25 @@ class NavActivity : android.app.Activity() {
             },
             onHint = { hint ->
                 showHint(hint)
+                if (hint.storeName.isNotBlank() || hint.text.isNotBlank()) {
+                    navActive = true
+                    spatial.start()
+                }
             },
             onCamera = { on ->
                 if (on && rtcActive) {
                     hud.status = "视频流占用相机"
                 } else if (on) {
                     navActive = true
-                    openCamera()
+                    spatial.start()
+                    if (!rtcActive) openCamera()
                 } else {
                     navActive = false
                     snapOnce = false
-                    if (!rtcActive) stopCamera()
+                    if (!rtcActive) {
+                        stopCamera()
+                        spatial.stop()
+                    }
                 }
             },
             onSnap = {
@@ -153,7 +163,11 @@ class NavActivity : android.app.Activity() {
         mic.onPcm = { pcm -> bridge.sendPcm(pcm) }
         bridge.start()
         requestDevicePermissions()
-        Log.i(TAG, "idle hud, camera off, imu=${imu.sensorName}")
+        val calib = com.glass.nav.glass.spatial.SensorProbe.dump(this, spatial.imu)
+        Log.i(
+            TAG,
+            "idle hud, camera off, imu=${imu.sensorName} fx=${calib.camera.fx} ts=${calib.camera.timestampSource}",
+        )
     }
 
     override fun onResume() {
@@ -165,6 +179,7 @@ class NavActivity : android.app.Activity() {
         main.removeCallbacks(poseTick)
         main.post(poseTick)
         if (navActive && !rtcActive) {
+            spatial.start()
             openCamera()
         }
         if (wantMic) {
@@ -179,6 +194,7 @@ class NavActivity : android.app.Activity() {
         main.removeCallbacks(frameTimeout)
         if (!isFinishing) {
             stopCamera()
+            if (!rtcActive) spatial.stop()
             stopMic()
         }
         imu.stop()
@@ -194,6 +210,7 @@ class NavActivity : android.app.Activity() {
         GlassP2p.stop()
         stopCamera()
         stopMic()
+        spatial.stop()
         imu.stop()
         super.onDestroy()
     }
@@ -242,11 +259,11 @@ class NavActivity : android.app.Activity() {
 
     private fun startRtc() {
         rtcActive = true
-        navActive = false
         snapOnce = false
         stopCamera()
+        spatial.ensureCamera()
         hud.status = "视频流"
-        GlassRtc.start(this) { cmd, payload ->
+        GlassRtc.start(this, spatial.hub) { cmd, payload ->
             main.post { bridge.sendRtc(cmd, payload) }
         }
         Log.i(TAG, "rtc start requested")
@@ -256,19 +273,21 @@ class NavActivity : android.app.Activity() {
         rtcActive = false
         GlassRtc.stop()
         hud.status = ""
+        if (!navActive) spatial.stop()
         Log.i(TAG, "rtc stop")
     }
 
     private fun openCamera() {
-        if (rtcActive) {
-            hud.status = "视频流占用相机"
-            return
-        }
         if (checkSelfPermission(Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED
         ) {
             hud.status = "没有相机权限"
             bridge.sendError("没有相机权限")
+            return
+        }
+        if (rtcActive || spatial.hub.opened || navActive) {
+            spatial.ensureCamera()
+            hud.status = if (navActive || rtcActive) "" else "正在打开相机"
             return
         }
         val status = camera.start()

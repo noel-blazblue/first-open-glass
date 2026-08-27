@@ -20,13 +20,16 @@ data class HudCard(
     val headingDeg: Float = 0f,
     val elevationDeg: Float = 0f,
     val stage: String = "",
+    val sessionId: String = "",
+    val tracking: String = "",
+    val waypoints: String = "",
 ) {
     val isTalk: Boolean
         get() = layout == LAYOUT_TALK
     val isNav: Boolean
         get() = layout == LAYOUT_NAV || skill == "nav"
     val visual: Boolean
-        get() = isNav && mode.isNotBlank()
+        get() = isNav && mode.isNotBlank() && tracking != "tracking_lost"
 
     fun clipped(): HudCard {
         if (isTalk) {
@@ -273,6 +276,9 @@ data class HudCard(
             headingDeg: Float = 0f,
             elevationDeg: Float = 0f,
             stage: String = "",
+            sessionId: String = "",
+            tracking: String = "",
+            waypoints: String = "",
         ): HudCard {
             val turnLabel = when (turn) {
                 "left" -> "左转"
@@ -302,6 +308,9 @@ data class HudCard(
                 headingDeg = headingDeg,
                 elevationDeg = elevationDeg,
                 stage = stage,
+                sessionId = sessionId,
+                tracking = tracking,
+                waypoints = waypoints,
             ).clipped()
         }
     }

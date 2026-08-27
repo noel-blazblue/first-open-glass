@@ -32,18 +32,23 @@ object EnvironmentMerge {
             recentChanges = recent,
             updatedAt = now,
         )
-        val movedLevels = look.placeHint == "elevator" ||
-            look.sceneBrief.contains("楼梯") ||
+        val withText = mergeSalient(withScene, look, now)
+        val space = look.spaceType.ifBlank { look.placeHint }.lowercase()
+        val movedLevels = space in levelSpaces ||
             look.actions.any { it.contains("上楼") || it.contains("下楼") }
-        val cleared = if (movedLevels && look.floorCandidate.isBlank()) {
-            staleFloors(withScene)
+        val cleared = if (movedLevels && resolvedFloor(look).first.isBlank()) {
+            staleFloors(withText)
         } else {
-            withScene
+            withText
         }
-        val floorOk = look.floorCandidate.isNotBlank() &&
-            (look.confidence >= 0.6f || FloorSignage.hasCue(look.floorEvidence + look.salientText))
+        val (floor, evidence) = resolvedFloor(look)
+        val floorOk = floor.isNotBlank() &&
+            (look.confidence >= 0.45f ||
+                FloorSignage.hasCue(evidence + look.salientText + look.floorCandidate) ||
+                look.spaceType.equals("signage", true) ||
+                look.spaceType.equals("elevator", true))
         return if (floorOk) {
-            mergeFloor(cleared, look.floorCandidate, look.floorEvidence, look.confidence, now)
+            mergeFloor(cleared, floor, evidence, look.confidence, now)
         } else {
             cleared
         }
@@ -53,35 +58,13 @@ object EnvironmentMerge {
         ocrSamples: List<String>,
         prev: EnvironmentState,
         now: Long,
-        minHits: Int = 2,
+        minHits: Int = 1,
     ): EnvironmentState {
         val candidate = FloorSignage.stabilize(ocrSamples, minHits) ?: return prev
         return mergeFloor(prev, candidate.floor, candidate.evidence, candidate.confidence, now)
     }
 
-    fun parseLook(raw: String): EnvironmentLook {
-        val json = extractJson(raw)
-        if (json != null) {
-            return EnvironmentLook(
-                sceneBrief = json["sceneBrief"].orEmpty().ifBlank { json["scene"].orEmpty() },
-                change = json["change"].orEmpty(),
-                salientText = json["salientText"].orEmpty(),
-                objects = splitList(json["objects"]),
-                actions = splitList(json["actions"]),
-                placeHint = json["placeHint"].orEmpty(),
-                floorCandidate = LandmarkSignage.normalizeFloor(json["floorCandidate"].orEmpty()),
-                floorEvidence = json["floorEvidence"].orEmpty(),
-                confidence = json["confidence"]?.toFloatOrNull() ?: 0f,
-            )
-        }
-        val parsed = parseNote(raw)
-        return EnvironmentLook(
-            sceneBrief = parsed.scene,
-            change = parsed.change,
-            salientText = parsed.scene.take(80),
-            confidence = if (parsed.scene.isNotBlank()) 0.4f else 0f,
-        )
-    }
+    fun parseLook(raw: String): EnvironmentLook = EventAnalysis.parseLook(raw)
 
     fun parseNote(raw: String): ParsedNote {
         val text = raw.trim().replace("```", "").trim()
@@ -92,6 +75,36 @@ object EnvironmentMerge {
             return ParsedNote(scene.take(280), change.take(80))
         }
         return ParsedNote(text.take(280), "")
+    }
+
+    private fun mergeSalient(prev: EnvironmentState, look: EnvironmentLook, now: Long): EnvironmentState {
+        val text = look.salientText.trim()
+        if (text.isBlank()) return prev
+        val others = prev.recentObservations.filterNot { it.kind == EnvironmentObservation.KIND_TEXT }
+        val next = EnvironmentObservation(
+            kind = EnvironmentObservation.KIND_TEXT,
+            value = text.take(48),
+            evidence = look.spaceType.ifBlank { look.placeHint },
+            confidence = look.confidence,
+            observedAt = now,
+            status = EnvironmentObservation.STATUS_OBSERVED,
+        )
+        return prev.copy(recentObservations = (listOf(next) + others).take(8), updatedAt = now)
+    }
+
+    private fun resolvedFloor(look: EnvironmentLook): Pair<String, String> {
+        val fromNav = LandmarkSignage.normalizeFloor(look.floorCandidate)
+        if (fromNav.isNotBlank()) {
+            return fromNav to look.floorEvidence.ifBlank { look.salientText }
+        }
+        val fromText = LandmarkSignage.parseVisibleFloor(look.salientText).ifBlank {
+            LandmarkSignage.parseVisibleFloor(look.floorEvidence)
+        }.ifBlank {
+            look.observedClaims.firstNotNullOfOrNull { claim ->
+                LandmarkSignage.parseVisibleFloor(claim.text).ifBlank { null }
+            }.orEmpty()
+        }
+        return fromText to look.salientText.ifBlank { look.floorEvidence }
     }
 
     private fun staleFloors(prev: EnvironmentState): EnvironmentState {
@@ -150,44 +163,9 @@ object EnvironmentMerge {
         return match.groupValues[1].trim()
     }
 
-    private fun extractJson(raw: String): Map<String, String>? {
-        val match = Regex("""\{[\s\S]*\}""").find(raw.trim()) ?: return null
-        val body = match.value
-        fun str(key: String): String {
-            val quoted = Regex("\"$key\"\\s*:\\s*\"([^\"]*)\"").find(body)?.groupValues?.get(1)
-            if (quoted != null) return quoted
-            val array = Regex("\"$key\"\\s*:\\s*(\\[[^\\]]*])").find(body)?.groupValues?.get(1)
-            if (array != null) return array
-            return Regex("\"$key\"\\s*:\\s*([^,}\\]]+)").find(body)?.groupValues?.get(1)?.trim().orEmpty()
-        }
-        if (!body.contains("sceneBrief") && !body.contains("\"scene\"")) return null
-        return mapOf(
-            "sceneBrief" to str("sceneBrief"),
-            "scene" to str("scene"),
-            "change" to str("change"),
-            "salientText" to str("salientText"),
-            "objects" to str("objects"),
-            "actions" to str("actions"),
-            "placeHint" to str("placeHint"),
-            "floorCandidate" to str("floorCandidate"),
-            "floorEvidence" to str("floorEvidence"),
-            "confidence" to str("confidence"),
-        )
-    }
-
-    private fun splitList(raw: String?): List<String> {
-        val text = raw.orEmpty().trim()
-        if (text.isBlank()) return emptyList()
-        return text
-            .removePrefix("[")
-            .removeSuffix("]")
-            .split(",")
-            .map { it.trim().trim('"') }
-            .filter { it.isNotBlank() }
-            .take(8)
-    }
-
     data class ParsedNote(val scene: String = "", val change: String = "")
+
+    private val levelSpaces = setOf("elevator", "stairs", "escalator")
 }
 
 object FloorSignage {

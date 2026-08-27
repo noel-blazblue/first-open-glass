@@ -7,8 +7,10 @@ import android.util.Log
 import com.glass.dining.phone.PhoneAi
 import com.glass.dining.phone.vision.StreamFrame
 import com.glass.dining.shared.agent.EnvironmentEpisode
+import com.glass.dining.shared.nav.NavPose
 import com.glass.dining.shared.agent.EnvironmentEventTracker
 import com.glass.dining.shared.agent.EnvironmentLook
+import com.glass.dining.shared.agent.SpatialEvidence
 import com.glass.dining.shared.agent.EnvironmentMerge
 import com.glass.dining.shared.agent.EnvironmentObservation
 import com.glass.dining.shared.agent.EnvironmentProbe
@@ -29,16 +31,35 @@ object EnvironmentWatcher {
     private val vlmTimes = ArrayList<Long>()
     private val queue = ArrayDeque<Queued>()
     private val recentJpeg = ArrayDeque<Pair<Long, ByteArray>>()
+    private val recentOcr = ArrayDeque<String>()
     private var probe = ProbeState()
     private var lastVlmAt: Long = 0
     private var lastYaw: Float = 0f
     private var yawAtIngest: Float = 0f
     private var haveYaw: Boolean = false
+    private var poseX: Float = 0f
+    private var poseY: Float = 0f
+    private var poseZ: Float = 0f
+    private var tracking: String = ""
     @Volatile private var vlmBusy: Boolean = false
+    var onSemantic: ((EnvironmentEpisode, EnvironmentLook, String) -> SpatialEvidence?)? = null
+    var onCommitted: (() -> Unit)? = null
+    private var lastSettledX: Float = 0f
+    private var lastSettledY: Float = 0f
+    private var lastSettledZ: Float = 0f
+    private var haveSettledPose: Boolean = false
 
     fun onHeading(yaw: Float) {
         lastYaw = yaw
         haveYaw = true
+    }
+
+    fun onPose(pose: NavPose) {
+        onHeading(pose.yaw)
+        poseX = pose.x
+        poseY = pose.y
+        poseZ = pose.z
+        tracking = pose.tracking
     }
 
     fun ingest(frame: StreamFrame, headingDelta: Float = 0f) {
@@ -54,12 +75,18 @@ object EnvironmentWatcher {
             heading = turn,
         )
         rememberJpeg(now, frame.jpeg)
+        rememberOcr(frame.extract.ocrText)
+        promoteSignage(now)
         val (next, signal) = EnvironmentProbe.step(probe, sample)
         probe = next
         when (signal) {
             is ProbeSignal.Hold -> Unit
             is ProbeSignal.TransitionStart -> {
-                Log.i(TAG, "env transition_start visual=${"%.2f".format(signal.visual)}")
+                Log.i(
+                    TAG,
+                    "env transition_start visual=${"%.2f".format(signal.visual)} " +
+                        "heading=${"%.1f".format(signal.heading)} ocr=${"%.2f".format(signal.ocr)}",
+                )
             }
             is ProbeSignal.Settled -> {
                 val jpeg = jpegNear(signal.episode.bestFrameAt, frame.jpeg)
@@ -68,7 +95,7 @@ object EnvironmentWatcher {
                     "env settled id=${signal.episode.id} visual=${"%.2f".format(signal.episode.visualFromAnchor)} " +
                         "sharp=${"%.0f".format(signal.episode.sharpness)} ocr=${signal.episode.bestOcr.length}",
                 )
-                enqueue(Queued(signal.episode, jpeg, urgent = false))
+                enqueue(Queued(withPose(signal.episode), jpeg, urgent = false))
             }
         }
         drain()
@@ -89,12 +116,22 @@ object EnvironmentWatcher {
             visualFromAnchor = 0f,
             bestFrameAt = now,
         )
-        enqueue(Queued(episode, frame.jpeg.copyOf(), urgent = true))
+        enqueue(Queued(withPose(episode), frame.jpeg.copyOf(), urgent = true))
         drain()
     }
 
     fun shouldRefresh(): Boolean {
         synchronized(lock) { return queue.isNotEmpty() }
+    }
+
+    private fun withPose(episode: EnvironmentEpisode): EnvironmentEpisode {
+        return episode.copy(
+            poseX = poseX,
+            poseY = poseY,
+            poseZ = poseZ,
+            yawDeg = lastYaw,
+            tracking = tracking,
+        )
     }
 
     private fun headingSinceLast(): Float {
@@ -110,6 +147,27 @@ object EnvironmentWatcher {
         if (jpeg.isEmpty()) return
         recentJpeg.addLast(atMs to jpeg.copyOf())
         while (recentJpeg.size > 8) recentJpeg.removeFirst()
+    }
+
+    private fun rememberOcr(text: String) {
+        val clipped = text.trim()
+        if (clipped.isBlank()) return
+        if (recentOcr.lastOrNull() == clipped) return
+        recentOcr.addLast(clipped)
+        while (recentOcr.size > 6) recentOcr.removeFirst()
+    }
+
+    private fun promoteSignage(now: Long) {
+        if (recentOcr.isEmpty()) return
+        val samples = recentOcr.toList()
+        val prev = EnvironmentStore.snapshot()
+        val next = EnvironmentStore.update { EnvironmentMerge.fromSignage(samples, it, now) }
+        val oldFloor = prev.recentObservations.filter { it.kind == EnvironmentObservation.KIND_FLOOR }
+        val newFloor = next.recentObservations.filter { it.kind == EnvironmentObservation.KIND_FLOOR }
+        if (newFloor != oldFloor) {
+            val fact = newFloor.maxByOrNull { it.observedAt }
+            Log.i(TAG, "env fact_promoted kind=floor_sign value=${fact?.value} conf=${fact?.confidence} via=ocr")
+        }
     }
 
     private fun jpegNear(atMs: Long, fallback: ByteArray): ByteArray {
@@ -157,11 +215,13 @@ object EnvironmentWatcher {
     }
 
     private fun startVlm(item: Queued) {
-        val previous = EnvironmentStore.snapshot().currentBrief
+        val snapshot = EnvironmentStore.snapshot()
+        val previous = snapshot.currentBrief
+        val eventThread = snapshot.eventThreadPrompt()
         Log.i(TAG, "env vlm start id=${item.episode.id} ocr=${item.episode.bestOcr.length} brief=${previous.length}")
         worker.post {
             try {
-                val raw = PhoneAi.envLook(item.jpeg, item.episode.bestOcr, previous)
+                val raw = PhoneAi.envLook(item.jpeg, item.episode.bestOcr, previous, eventThread)
                 val look = EnvironmentMerge.parseLook(raw.orEmpty())
                 if (look.sceneBrief.isBlank()) {
                     Log.w(TAG, "env vlm empty id=${item.episode.id}, keep previous")
@@ -169,16 +229,46 @@ object EnvironmentWatcher {
                 }
                 val now = SystemClock.elapsedRealtime()
                 val prev = EnvironmentStore.snapshot()
-                var merged = EnvironmentMerge.fromLook(look, prev, now)
-                merged = EnvironmentMerge.fromSignage(item.episode.ocrSamples, merged, now)
-                merged = EnvironmentEventTracker.ingest(look, merged, now)
-                EnvironmentStore.replace(merged)
+                val lookNow = look
+                val merged = EnvironmentStore.update { current ->
+                    var nextState = EnvironmentMerge.fromLook(lookNow, current, now)
+                    nextState = EnvironmentMerge.fromSignage(item.episode.ocrSamples, nextState, now)
+                    val spatial = spatialOf(item.episode, lookNow, raw.orEmpty())
+                    EnvironmentEventTracker.ingest(lookNow, nextState, now, spatial)
+                }
                 logCommitted(item.episode, prev, merged, look)
+                onCommitted?.invoke()
             } finally {
                 synchronized(lock) { vlmBusy = false }
                 drain()
             }
         }
+    }
+
+    private fun spatialOf(
+        episode: EnvironmentEpisode,
+        look: EnvironmentLook,
+        raw: String,
+    ): SpatialEvidence {
+        val moved = if (haveSettledPose) {
+            kotlin.math.hypot(
+                (episode.poseX - lastSettledX).toDouble(),
+                (episode.poseY - lastSettledY).toDouble(),
+            ).toFloat()
+        } else {
+            0f
+        }
+        lastSettledX = episode.poseX
+        lastSettledY = episode.poseY
+        lastSettledZ = episode.poseZ
+        haveSettledPose = true
+        val extra = try {
+            onSemantic?.invoke(episode, look, raw)
+        } catch (error: Exception) {
+            Log.w(TAG, "env semantic ${error.message}")
+            null
+        }
+        return SpatialEvidence.from(episode, extra ?: SpatialEvidence()).copy(movedMeters = moved)
     }
 
     private fun logCommitted(
@@ -188,6 +278,13 @@ object EnvironmentWatcher {
         look: EnvironmentLook,
     ) {
         Log.i(TAG, "env episode_committed id=${episode.id} scene=${next.currentBrief.take(36)}")
+        Log.i(
+            TAG,
+            "env look floor=${look.floorCandidate.ifBlank { "-" }} " +
+                "salient=${look.salientText.take(24).ifBlank { "-" }} " +
+                "space=${look.spaceType.ifBlank { look.placeHint }.ifBlank { "-" }} " +
+                "conf=${"%.2f".format(look.confidence)}",
+        )
         val oldFloor = prev.recentObservations.filter { it.kind == EnvironmentObservation.KIND_FLOOR }
         val newFloor = next.recentObservations.filter { it.kind == EnvironmentObservation.KIND_FLOOR }
         if (newFloor != oldFloor) {

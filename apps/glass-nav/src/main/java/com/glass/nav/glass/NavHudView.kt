@@ -7,8 +7,14 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.util.AttributeSet
 import android.view.View
+import com.glass.dining.shared.indoor.OccupancyGrid
+import com.glass.dining.shared.indoor.Pose3
+import com.glass.dining.shared.indoor.TrackQuality
 import com.glass.dining.shared.nav.HudLines
+import com.glass.dining.shared.nav.IndoorProtocol
 import com.glass.dining.shared.nav.NavProtocol
+import com.glass.nav.glass.spatial.SensorProbe
+import com.glass.nav.glass.spatial.WorldAnchorRenderer
 import kotlin.math.atan
 import kotlin.math.sin
 import java.text.SimpleDateFormat
@@ -23,6 +29,10 @@ class NavHudView @JvmOverloads constructor(
     @Volatile var card: HudLines = HudLines.idle()
     @Volatile var status: String = ""
     @Volatile var pitchDeg: Float = 0f
+    @Volatile var pose: Pose3 = Pose3()
+    @Volatile var quality: TrackQuality = TrackQuality.LOST
+    var occupancy: OccupancyGrid = OccupancyGrid()
+    private val renderer = WorldAnchorRenderer()
 
     private val green = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(0, 255, 0)
@@ -129,11 +139,35 @@ class NavHudView @JvmOverloads constructor(
     }
 
     private fun drawGround(canvas: Canvas, w: Float, h: Float) {
+        if (hideArrows()) return
+        val screens = renderer.screens(
+            pose = pose,
+            quality = quality,
+            waypoints = card.waypoints,
+            occupancy = occupancy,
+            headingDeg = card.headingDeg,
+            viewW = w,
+            viewH = h,
+            calib = SensorProbe.calibration,
+        )
+        if (screens.isNotEmpty()) {
+            screens.forEachIndexed { index, point ->
+                val meters = 2.2f + index * 1.4f
+                val scale = (1.15f / meters).coerceIn(0.16f, 0.48f) * w
+                drawChevron(canvas, point.first, point.second, scale, card.headingDeg)
+            }
+            return
+        }
+        if (card.tracking.isNotBlank()) return
         chevronMeters.forEach { distance ->
             val point = projectGround(distance, card.headingDeg, pitchDeg, w, h) ?: return@forEach
             val scale = (1.15f / distance).coerceIn(0.16f, 0.48f) * w
             drawChevron(canvas, point.first, point.second, scale, card.headingDeg)
         }
+    }
+
+    private fun hideArrows(): Boolean {
+        return quality == TrackQuality.LOST || card.tracking == IndoorProtocol.TRACK_LOST
     }
 
     private fun drawPointer(canvas: Canvas, w: Float, h: Float) {

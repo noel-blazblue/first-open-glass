@@ -1,5 +1,7 @@
 package com.glass.dining.shared.agent
 
+import com.glass.dining.shared.nav.LandmarkSignage
+
 /**
  * 通用环境变化探针：画面结构为主，OCR 为辅。
  * 转场只开始收集，稳定且不同于上一视野后才提交 episode。
@@ -12,6 +14,7 @@ object EnvironmentProbe {
     const val SETTLE_MS = 1_400L
     const val SETTLE_INTERNAL = 0.10f
     const val TRANSITION_VISUAL = 0.18f
+    const val TRANSITION_OCR = 0.30f
     const val ANCHOR_VISUAL = 0.18f
     const val MAX_COLLECT = 8
 
@@ -138,7 +141,14 @@ object EnvironmentProbe {
             val text = frame.ocr.length.toDouble()
             val quality = if (frame.qualityOk) 40.0 else 0.0
             val exposure = 20.0 - kotlin.math.abs(frame.brightness - 110f)
-            quality + sharp + text * 0.4 + exposure
+            val signage = if (LandmarkSignage.parseVisibleFloor(frame.ocr).isNotBlank() &&
+                FloorSignage.hasCue(frame.ocr)
+            ) {
+                80.0
+            } else {
+                0.0
+            }
+            quality + sharp + text * 0.4 + exposure + signage
         }
     }
 
@@ -186,7 +196,9 @@ object EnvironmentProbe {
         val leaving = vsLast.visual >= TRANSITION_VISUAL ||
             vsAnchor >= 0.22f ||
             vsLast.level == Level.HIGH ||
-            vsLast.heading >= 35f
+            vsLast.heading >= 35f ||
+            vsLast.ocr >= TRANSITION_OCR ||
+            ocrChange(state.anchor?.ocr.orEmpty(), frame.ocr) >= TRANSITION_OCR
         if (!leaving) {
             val nextWindow = (state.window + frame).takeLast(3)
             return state.copy(window = nextWindow) to ProbeSignal.Hold
@@ -196,7 +208,7 @@ object EnvironmentProbe {
             window = listOf(frame),
             transitionAt = frame.atMs,
         )
-        return next to ProbeSignal.TransitionStart(frame.atMs, vsLast.visual)
+        return next to ProbeSignal.TransitionStart(frame.atMs, vsLast.visual, vsLast.heading, vsLast.ocr)
     }
 
     private fun onCollecting(

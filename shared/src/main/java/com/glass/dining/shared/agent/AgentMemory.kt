@@ -13,82 +13,29 @@ object AgentMemory {
 
     fun summarize(dropped: List<LlmMessage>): String {
         val goal = dropped.firstOrNull { it.role == "user" }?.content.orEmpty().take(40)
-        val facts = dropped.filter { it.role == "tool" && it.content.contains("\"ok\":true") }
+        val facts = dropped.filter { it.role == "tool" }
             .mapNotNull { factFromTool(it.content) }
             .distinct()
             .take(6)
         val pending = dropped.filter { it.role == "tool" && it.content.contains("need_confirm") }
-            .mapNotNull { field(it.content, "message") }
+            .mapNotNull { ToolSpeak.field(it.content, "message") }
+            .filter { !ToolSpeak.isDeveloper(it) }
             .distinct()
             .take(3)
-        val ids = dropped.mapNotNull { ActionPolicy.requestIdOf(it.content) }
-            .filter { it.isNotBlank() }
-            .distinct()
         return buildString {
             append("【压缩摘要】目标：").append(goal.ifBlank { "未记录" })
             append("。已确认事实：").append(if (facts.isEmpty()) "无" else facts.joinToString("；"))
             append("。待办：").append(if (pending.isEmpty()) "无" else pending.joinToString("；"))
-            append("。副作用ID：").append(if (ids.isEmpty()) "无" else ids.joinToString(","))
         }
     }
 
     private fun factFromTool(content: String): String? {
-        val store = field(content, "shortName").ifBlank { field(content, "store") }
-        val place = field(content, "name")
+        if (!content.contains("\"ok\":true")) return null
+        if (content.contains("need_confirm") || content.contains("need_disambiguation")) return null
+        if (content.contains("\"observation\":true") && !content.contains("\"matched\":true")) return null
+        val store = ToolSpeak.field(content, "shortName").ifBlank { ToolSpeak.field(content, "store") }
+        val place = ToolSpeak.field(content, "name")
         return store.ifBlank { place }.ifBlank { null }
-    }
-
-    private fun field(json: String, key: String): String {
-        val token = "\"$key\""
-        val start = json.indexOf(token)
-        if (start < 0) return ""
-        val colon = json.indexOf(':', start + token.length)
-        if (colon < 0) return ""
-        val from = json.indexOf('"', colon + 1)
-        val to = json.indexOf('"', from + 1)
-        if (from < 0 || to < 0) return ""
-        return json.substring(from + 1, to)
-    }
-}
-
-object AgentContextAssembler {
-    fun format(world: WorldContext): String {
-        val place = world.currentPlace
-        val obs = world.observation
-        val gps = if (world.hasGps) {
-            "有定位"
-        } else {
-            "无定位"
-        }
-        val obsLine = if (obs == null || obs.scene == SceneObservation.SCENE_UNKNOWN) {
-            "无稳定观察（观察不是事实）"
-        } else {
-            "场景=${obs.scene} 文本=${obs.visibleText.take(24)} 置信=${"%.2f".format(obs.confidence)} " +
-                "稳定=${obs.stability} 候选=${obs.storeCandidate.ifBlank { "无" }} 已晋级事实=${obs.isStoreFact}"
-        }
-        return buildString {
-            append("【世界】技能=").append(world.skill)
-            append(" 导航中=").append(world.navActive)
-            append(" 定位=").append(gps)
-            append(" 本地餐饮目录=").append(world.catalogCount).append("家（增强数据，不是世界全集）")
-            append(" 当前地点=")
-            if (place == null) {
-                append("无")
-            } else {
-                append(place.name).append("(").append(place.source).append(")")
-                if (place.floor.isNotBlank()) append(" 楼层=").append(place.floor)
-            }
-            append(" 候选=").append(world.candidates.joinToString("、") { it.name }.ifBlank { "无" })
-            append(" 楼层=").append(
-                world.environment?.usableFloor?.ifBlank { null }
-                    ?: world.currentFloor.ifBlank { world.spokenFloor }.ifBlank { "未知" },
-            )
-            append(" 待支付=").append(world.pendingPay.ifBlank { "无" })
-            append(" 待核销=").append(world.pendingCoupon.ifBlank { "无" })
-            append("\n【观察】").append(obsLine)
-            append("\n").append(world.environment?.promptBlock() ?: "【当前环境】无稳定环境记录")
-            append("\n【能力】").append(world.capabilities.joinToString("、").ifBlank { "问答、看环境、搜附近、导航" })
-        }
     }
 }
 
@@ -130,17 +77,13 @@ object DegradedPlanner {
         }
         if (content.contains("\"unique\":true") || content.contains("\"place_id\"")) {
             if (wantsNav(user)) {
-                val id = AgentMemory.summarize(listOf(tool)).let { field(content, "place_id").ifBlank { field(content, "id") } }
+                val id = ToolSpeak.field(content, "place_id").ifBlank { ToolSpeak.field(content, "id") }
                 if (id.isNotBlank()) {
                     return tool("start_navigation", """{"place_id":${ToolResult.jsonString(id)}}""")
                 }
             }
         }
-        val message = field(content, "message").ifBlank { field(content, "error") }
-        val speak = message.ifBlank {
-            if (world.modelReady) "我看过工具结果了。" else "已处理。配好语言模型后能讲得更清楚。"
-        }
-        return LlmTurn(content = speak)
+        return LlmTurn(content = ToolSpeak.forUser(content, world.modelReady))
     }
 
     private fun tool(name: String, args: String): LlmTurn {
@@ -181,17 +124,5 @@ object DegradedPlanner {
 
     private fun isRedeemConfirm(text: String): Boolean {
         return listOf("确认核销", "核销吧").any { text.contains(it) }
-    }
-
-    private fun field(json: String, key: String): String {
-        val token = "\"$key\""
-        val start = json.indexOf(token)
-        if (start < 0) return ""
-        val colon = json.indexOf(':', start + token.length)
-        if (colon < 0) return ""
-        val from = json.indexOf('"', colon + 1)
-        val to = json.indexOf('"', from + 1)
-        if (from < 0 || to < 0) return ""
-        return json.substring(from + 1, to)
     }
 }

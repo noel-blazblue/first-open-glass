@@ -1,0 +1,193 @@
+package com.glass.dining.shared.indoor
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class OccupancyTest {
+    @Test
+    fun blockedCellDropsChevron() {
+        val grid = OccupancyGrid()
+        val pose = Pose3()
+        grid.recenter(pose)
+        grid.markCorridor(pose, 6f)
+        grid.markBlocked(pose, 0f, 2.2f)
+        val pts = LocalPath.conservative(grid, pose, 0f)
+        assertTrue(pts.none { it.y in 2.0f..2.5f })
+    }
+
+    @Test
+    fun corridorKeepsForwardPoints() {
+        val grid = OccupancyGrid()
+        val pose = Pose3()
+        grid.recenter(pose)
+        grid.markCorridor(pose, 6f)
+        val pts = LocalPath.conservative(grid, pose, 0f)
+        assertTrue(pts.size >= 2)
+    }
+}
+
+class TopologyBuilderTest {
+    @Test
+    fun nearbySameKindMerges() {
+        val builder = TopologyBuilder()
+        builder.start("s1")
+        val grid = IntArray(256) { 20 }
+        val a = builder.ingest(
+            Pose3(),
+            SemanticObservation(spaceType = "junction", confidence = 0.8f, episodeId = "e1"),
+            grid,
+        )
+        val b = builder.ingest(
+            Pose3(position = Vec3(0.4f, 0.3f, 0f)),
+            SemanticObservation(spaceType = "junction", confidence = 0.7f, episodeId = "e2"),
+            grid,
+        )
+        assertEquals(a!!.id, b!!.id)
+        assertEquals(1, builder.topology.nodes.size)
+        assertEquals(2, b.hits)
+    }
+
+    @Test
+    fun farNodesGetEdgeAndPathBack() {
+        val builder = TopologyBuilder()
+        builder.start("s1")
+        val empty = IntArray(0)
+        builder.ingest(Pose3(), SemanticObservation(spaceType = "entrance", confidence = 0.8f), empty)
+        builder.ingest(
+            Pose3(position = Vec3(0f, 6f, 0f)),
+            SemanticObservation(spaceType = "elevator", confidence = 0.8f),
+            empty,
+        )
+        val g = builder.topology
+        assertEquals(2, g.nodes.size)
+        assertEquals(1, g.edges.size)
+        val path = g.path(g.nodes.last().id, g.nodes.first().id)
+        assertEquals(2, path.size)
+    }
+
+    @Test
+    fun textAloneDoesNotMergeDifferentPlaces() {
+        val builder = TopologyBuilder()
+        builder.start("s1")
+        val g1 = IntArray(256) { 10 }
+        val g2 = IntArray(256) { 80 }
+        builder.ingest(
+            Pose3(),
+            SemanticObservation(spaceType = "corridor", evidence = "走廊", confidence = 0.9f),
+            g1,
+        )
+        builder.ingest(
+            Pose3(position = Vec3(0f, 8f, 0f)),
+            SemanticObservation(spaceType = "corridor", evidence = "走廊", confidence = 0.9f),
+            g2,
+        )
+        assertEquals(2, builder.topology.nodes.size)
+    }
+}
+
+class ExplorationTest {
+    @Test
+    fun lostTrackingAsksScan() {
+        val hint = ExplorationPlanner().decide(
+            LiveTopology(),
+            SemanticObservation(),
+            Pose3(),
+            TrackQuality.LOST,
+            "海底捞",
+            "4",
+            "1",
+            OccupancyGrid(),
+        )
+        assertTrue(hint.scanRequired)
+        assertEquals("tracking_lost", hint.tracking)
+    }
+
+    @Test
+    fun storeNameArrives() {
+        val hint = ExplorationPlanner().decide(
+            LiveTopology(),
+            SemanticObservation(storeNames = listOf("海底捞"), confidence = 0.8f, spaceType = "storefront"),
+            Pose3(),
+            TrackQuality.GOOD,
+            "海底捞",
+            "4",
+            "4",
+            OccupancyGrid(),
+        )
+        assertTrue(hint.arrived)
+    }
+
+    @Test
+    fun parseSemanticJson() {
+        val look = SemanticLook.parse(
+            """{"spaceType":"junction","guideDir":"right","exits":[{"dir":"right","label":"餐饮"}],"floorCandidate":"7F","confidence":0.8,"salientText":"7F餐饮"}""",
+        )
+        assertEquals(NodeKind.JUNCTION, look.kind)
+        assertEquals("right", look.guideDir)
+        assertEquals("7", look.floorCandidate)
+        assertEquals(1, look.exits.size)
+    }
+
+    @Test
+    fun parseNestedNavigationObject() {
+        val look = SemanticLook.parse(
+            """{"observation":{"sceneBrief":"走廊分叉","salientText":"餐饮"},"navigation":{"spaceType":"junction","guideDir":"right","exits":[{"dir":"right","label":"餐饮"}],"floorCandidate":"7F"},"confidence":0.8}""",
+        )
+        assertEquals(NodeKind.JUNCTION, look.kind)
+        assertEquals("right", look.guideDir)
+        assertEquals("7", look.floorCandidate)
+        assertEquals(1, look.exits.size)
+    }
+}
+
+class IndoorHintBinderTest {
+    @Test
+    fun scanRequiredHidesGroundMode() {
+        val guide = IndoorHintBinder.bind(
+            ocr = null,
+            explore = ExploreHint(text = "请缓慢环视", scanRequired = true, mode = "ground"),
+            pose = Pose3(),
+            occupancy = OccupancyGrid(),
+            quality = TrackQuality.WEAK,
+            storeName = "海底捞",
+            remaining = 0,
+            stage = "seek_store",
+        )
+        assertEquals("", guide.mode)
+        assertTrue(guide.scanRequired)
+    }
+
+    @Test
+    fun lostTrackingHasNoWaypoints() {
+        val guide = IndoorHintBinder.bind(
+            ocr = null,
+            explore = ExploreHint(text = "定位丢失", tracking = "tracking_lost", mode = "", scanRequired = true),
+            pose = Pose3(),
+            occupancy = OccupancyGrid(),
+            quality = TrackQuality.LOST,
+            storeName = "海底捞",
+            remaining = 0,
+            stage = "seek_store",
+        )
+        assertTrue(guide.waypoints.isEmpty())
+        assertEquals("tracking_lost", guide.tracking)
+    }
+}
+
+class WorldAnchorTest {
+    @Test
+    fun lostQualityHidesChevrons() {
+        val pts = WorldAnchor.chevrons(Pose3(), 0f, OccupancyGrid(), TrackQuality.LOST)
+        assertTrue(pts.isEmpty())
+    }
+
+    @Test
+    fun aheadPointProjectsIntoHud() {
+        val pose = Pose3()
+        val world = pointAhead(pose, 3.6f, 0f)
+        val pix = WorldAnchor.project(world, pose, SensorCalibration.rokidGlass3(), 480f, 640f)
+        assertTrue(pix != null)
+        assertTrue(pix!!.first in 100f..380f)
+    }
+}

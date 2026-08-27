@@ -148,6 +148,36 @@ class EnvironmentProbeTest {
         assertEquals(ViewPhase.Stable, s5.phase)
     }
 
+    @Test
+    fun pickBestPrefersFloorSignOcrOverLongerBanner() {
+        val banner = ProbeFrame(0, grid(180), "R 深港欢迎您来到本园区", 50.0, 110f, true)
+        val floor = ProbeFrame(1, grid(180), "7层 导览", 40.0, 110f, true)
+        val best = EnvironmentProbe.pickBest(listOf(banner, floor))
+        assertEquals("7层 导览", best.ocr)
+    }
+
+    @Test
+    fun newReadableTextRetriggersAfterSimilarVisualSettle() {
+        var state = ProbeState()
+        val room = grid(180)
+        val office = ProbeFrame(0, room, "R 深港欢迎您来到本园区", 50.0, 110f, true)
+        state = EnvironmentProbe.step(state, office).first
+        val officeStill = ProbeFrame(1_400, room, "R 深港欢迎您来到本园区", 52.0, 110f, true)
+        val settled = EnvironmentProbe.step(state, officeStill)
+        state = settled.first
+        assertTrue(settled.second is ProbeSignal.Settled)
+
+        val sign = ProbeFrame(2_800, room, "7层 导览", 48.0, 110f, true)
+        val leave = EnvironmentProbe.step(state, sign)
+        assertTrue(leave.second is ProbeSignal.TransitionStart)
+        assertTrue((leave.second as ProbeSignal.TransitionStart).ocr >= 0.30f)
+        state = leave.first
+        val stay = ProbeFrame(4_200, room, "7层 导览", 50.0, 110f, true)
+        val again = EnvironmentProbe.step(state, stay)
+        assertTrue(again.second is ProbeSignal.Settled)
+        assertTrue((again.second as ProbeSignal.Settled).episode.bestOcr.contains("7"))
+    }
+
     private fun grid(value: Int): IntArray {
         return IntArray(256) { value.coerceIn(0, 255) }
     }

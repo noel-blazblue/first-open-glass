@@ -1,3 +1,35 @@
+## 2026-08-27 — 说话时姿态改走 WebRTC DataChannel，CXR 只保 PCM
+
+- 场景：转头看标识时环境探针拿不到 yaw；麦开着又不能在蓝牙上发 pose。
+- 误判：蓝牙绝对带不动一个姿态包；或者要为 pose 再开一条 UDP。
+- 根因：CXR 上行和 16kHz PCM 共用 `rk_evt`。10Hz pose 会把麦挤掉。视频已经在 Wi-Fi Direct 的 RTP 上，DataChannel 当时是空实现。
+- 以后先做：手机 offer 前建无序、不重传的 `pose` DataChannel。眼镜 `onDataChannel` 后才能发。OPEN 时麦也发，不再走 CXR。DC 未开且导航且没说话才稀疏 CXR。看 log `rtc pose open` / `rtc pose n=`，同时要有 `pcm n=`。
+- 不要做：为 pose 单独开 Direct；可靠有序 DataChannel；麦开着还在 CXR 高频发 pose。
+
+## 2026-08-27 — 办公室广角结算后盯着标识，画面差太小就不会再开 episode
+
+- 场景：转头看楼层标识，VLM 写了整间办公室，context 没有层号。
+- 误判：转头没捕捉到；OCR 没开。
+- 根因：`transition_start` 已经因 visual 触发，1.4s 内结算成办公室广角。之后标识和办公室网格差 < 0.18，Stable 不再离开。层号又不进【当前视野】。
+- 以后先做：Stable 时 OCR Jaccard ≥0.30 也开新转场（通用文字变化，不是楼层关键词）。抽帧 OCR 立刻 `fromSignage` 进 `floor_sign`，不等 VLM。说话时 yaw 走 DataChannel，heading≥35° 也能离开。看 log `transition_start ... ocr=` / `fact_promoted ... via=ocr`。
+- 不要做：从 sceneBrief 抠层号；为了标识把转场阈值做成楼层专用分支。
+
+
+
+- 场景：开着画面，转头看墙面楼层标识几秒，手机 Agent Context 没有楼层，【当前视野】仍是桌子或办公区。
+- 误判：转头没触发；VLM 没跑；空闲不开相机所以完全没帧。
+- 根因：log 有 `transition_start` 和 `settled`，但结算帧 OCR 是横幅「R 深港」不是「7层」。VLM 把整间办公室写成 sceneBrief，`floorCandidate` 为空。层号按规定不进场景正文；OCR 又要两次命中才写入。转回桌子后 `currentBrief` 被覆盖，【近期观察】里也没有楼层标识。
+- 以后先做：`pickBest` 优先带楼层 OCR 的帧。`salientText` / 单次清晰 `parseVisibleFloor` 可以写入 `floor_sign`（观察，不是用户确认）。可见文字进 `visible_text`。VLM 提交后立刻 `publishAgentContext`。看 log `env look floor=` / `salient=` / `fact_promoted`。
+- 不要做：从 sceneBrief 正则抠层号；把横幅数字当楼层；等下一帧采样才刷新 context。
+
+## 2026-08-27 — 室内箭头世界锁定：相机和 IMU 必须同一时间基，跟踪丢失立刻藏箭头
+
+- 场景：转头、低头、走 10m 后贴地箭头应停在原地；跟踪丢了还画假箭头会指向墙或人。
+- 误判：用固定眼高 + pitch 把 2.2/3.6/5.2m 投到屏幕就算 AR；手机 heading 够用。
+- 根因：旧 `NavHudView.projectGround` 没有世界锚点。Camera2 和原始 gyro/accel 的 `event.timestamp` 必须能对上，`TimeSync.usable` 要求 ≥8 样本、|offset|<20ms、相机间隔 20–120ms。不满足时不能用 pitch 投影冒充。
+- 以后先做：`SensorProbe` 读 Camera2 内参和 `SENSOR_INFO_TIMESTAMP_SOURCE`。`CameraFrameHub` 唯一 Camera2 owner，YUV 给 VIO、I420 给 WebRTC。本地 `SpatialTracker` 投影 3D waypoint。`tracking_lost` 或本地 `TrackQuality.LOST` 不画箭头。看 log `spatial probe` / `spatial sync usable=`。
+- 不要做：WebRTC `Camera2Capturer` 再开一个会话；麦开着高频发 pose；无导视时编完整室内路线。
+
 ## 2026-08-27 — 转头看楼层再转回电脑，问几楼会丢，是运动中立刻抽帧
 
 - 场景：看电脑 → 转头看楼层标识停留 → 转回电脑 → 问「我在几楼」→ AI 说眼前是显示器、看不到楼层。

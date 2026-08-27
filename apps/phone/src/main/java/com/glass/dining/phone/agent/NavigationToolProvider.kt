@@ -121,7 +121,7 @@ class NavigationToolProvider(private val world: PhoneWorld) {
             .put("store", store.name)
             .put("shortName", store.shortName)
             .put("source", store.source)
-            .put("message", "开始去${store.shortName}")
+            .put("message", "开始前往${store.shortName}")
             .toString()
     }
 
@@ -176,7 +176,7 @@ class NavigationToolProvider(private val world: PhoneWorld) {
             }
             is DestinationResolve.NeedLocation -> error("need_location", "需要定位才能找${resolved.query}。请打开定位或告诉我区域。")
             is DestinationResolve.NotFound -> error(resolved.reason, resolved.reason.let { reason ->
-                if (reason == "need_search") "还没搜附近，请调用 search_nearby_places" else "附近没有找到${resolved.query}"
+                if (reason == "need_search") "还没搜附近，需要先搜索公开地点" else "附近没有找到${resolved.query}"
             })
         }
     }

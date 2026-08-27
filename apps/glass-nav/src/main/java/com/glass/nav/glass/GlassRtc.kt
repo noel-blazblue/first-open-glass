@@ -4,9 +4,11 @@ import android.content.Context
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
+import com.glass.dining.shared.nav.NavPose
 import com.glass.dining.shared.nav.NavProtocol
-import org.webrtc.Camera2Enumerator
-import org.webrtc.CameraVideoCapturer
+import com.glass.nav.glass.spatial.CameraFrameHub
+import com.glass.nav.glass.spatial.HubVideoCapturer
+import com.glass.nav.glass.spatial.RtcPoseSender
 import org.webrtc.DataChannel
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
@@ -49,10 +51,14 @@ object GlassRtc {
     private var send: ((String, String?) -> Unit)? = null
     private var remoteSet: Boolean = false
     @Volatile private var initialized: Boolean = false
+    private val poseSender = RtcPoseSender()
 
-    fun start(context: Context, send: (String, String?) -> Unit) {
+    val poseOpen: Boolean
+        get() = poseSender.open
+
+    fun start(context: Context, hub: CameraFrameHub, send: (String, String?) -> Unit) {
         this.send = send
-        rtc.post { startOnRtc(context.applicationContext) }
+        rtc.post { startOnRtc(context.applicationContext, hub) }
     }
 
     fun stop() {
@@ -79,7 +85,13 @@ object GlassRtc {
         }
     }
 
-    private fun startOnRtc(context: Context) {
+    fun sendPose(pose: NavPose): Boolean {
+        if (!poseSender.open) return false
+        rtc.post { poseSender.send(pose) }
+        return true
+    }
+
+    private fun startOnRtc(context: Context, hub: CameraFrameHub) {
         if (active) {
             emit(NavProtocol.CMD_RTC_READY, null)
             return
@@ -90,7 +102,7 @@ object GlassRtc {
             val peer = peerFactory.createPeerConnection(rtcConfig(), observer)
                 ?: throw IllegalStateException("createPeerConnection 失败")
             pc = peer
-            startCamera(context, peerFactory, peer)
+            startCamera(context, peerFactory, peer, hub)
             active = true
             emit(NavProtocol.CMD_RTC_READY, null)
             emit(NavProtocol.CMD_RTC_STAT, """{"ice":"new","side":"glass"}""")
@@ -121,6 +133,7 @@ object GlassRtc {
         source = null
         helper?.dispose()
         helper = null
+        poseSender.release()
         try {
             pc?.close()
         } catch (_: Exception) {
@@ -152,28 +165,9 @@ object GlassRtc {
         context: Context,
         peerFactory: PeerConnectionFactory,
         peer: PeerConnection,
+        hub: CameraFrameHub,
     ) {
-        val enumerator = Camera2Enumerator(context)
-        val cameraId = enumerator.deviceNames.firstOrNull { enumerator.isBackFacing(it) }
-            ?: enumerator.deviceNames.firstOrNull()
-            ?: throw IllegalStateException("没有可用相机")
-        val events = object : CameraVideoCapturer.CameraEventsHandler {
-            override fun onCameraError(error: String?) {
-                Log.w(TAG, "camera error $error")
-                emit(NavProtocol.CMD_ERROR, "眼镜相机: ${error ?: "unknown"}")
-            }
-            override fun onCameraDisconnected() = Unit
-            override fun onCameraFreezed(error: String?) {
-                Log.w(TAG, "camera frozen $error")
-            }
-            override fun onCameraOpening(id: String?) = Unit
-            override fun onFirstFrameAvailable() {
-                emit(NavProtocol.CMD_RTC_STAT, """{"ice":"capturing","side":"glass"}""")
-            }
-            override fun onCameraClosed() = Unit
-        }
-        val nextCapturer = enumerator.createCapturer(cameraId, events)
-            ?: throw IllegalStateException("无法打开 Camera2Capturer")
+        val nextCapturer = HubVideoCapturer(hub)
         val texture = SurfaceTextureHelper.create("glass-rtc-tex", egl!!.eglBaseContext)
         val videoSource = peerFactory.createVideoSource(false)
         nextCapturer.initialize(texture, context, videoSource.capturerObserver)
@@ -196,7 +190,7 @@ object GlassRtc {
         helper = texture
         source = videoSource
         track = videoTrack
-        Log.i(TAG, "camera $cameraId ${NavProtocol.RTC_WIDTH}x${NavProtocol.RTC_HEIGHT}@${NavProtocol.RTC_FPS}")
+        Log.i(TAG, "hub camera ${NavProtocol.RTC_WIDTH}x${NavProtocol.RTC_HEIGHT}@${NavProtocol.RTC_FPS}")
     }
 
     private fun applyRemoteSdp(type: String, sdp: String) {
@@ -300,7 +294,11 @@ object GlassRtc {
         override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) = Unit
         override fun onAddStream(stream: MediaStream?) = Unit
         override fun onRemoveStream(stream: MediaStream?) = Unit
-        override fun onDataChannel(channel: DataChannel?) = Unit
+        override fun onDataChannel(channel: DataChannel?) {
+            val next = channel ?: return
+            if (next.label() != NavProtocol.DC_POSE) return
+            poseSender.attach(next)
+        }
         override fun onRenegotiationNeeded() = Unit
         override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) = Unit
         override fun onTrack(transceiver: RtpTransceiver?) = Unit

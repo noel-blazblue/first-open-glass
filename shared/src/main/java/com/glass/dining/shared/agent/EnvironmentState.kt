@@ -17,9 +17,20 @@ data class EnvironmentObservation(
 ) {
     companion object {
         const val KIND_FLOOR = "floor_sign"
+        const val KIND_TEXT = "visible_text"
         const val STATUS_OBSERVED = "observed"
         const val STATUS_CONFIRMED = "confirmed"
+        const val STATUS_INFERRED = "inferred"
         const val STATUS_STALE = "stale"
+        const val STATUS_HYPOTHESIS = "hypothesis"
+
+        fun evidenceMark(confidence: String): String {
+            return when (confidence) {
+                STATUS_CONFIRMED, STATUS_OBSERVED -> "观察到"
+                STATUS_INFERRED -> "根据连续证据判断"
+                else -> "推断"
+            }
+        }
     }
 }
 
@@ -29,10 +40,19 @@ data class EnvironmentLook(
     val salientText: String = "",
     val objects: List<String> = emptyList(),
     val actions: List<String> = emptyList(),
+    val actors: List<String> = emptyList(),
+    val location: String = "",
     val placeHint: String = "",
+    val observedClaims: List<ObservedClaim> = emptyList(),
     val floorCandidate: String = "",
     val floorEvidence: String = "",
     val confidence: Float = 0f,
+    val spaceType: String = "",
+    val guideDir: String = "",
+    val storeNames: List<String> = emptyList(),
+    val blocked: Boolean = false,
+    val exits: List<String> = emptyList(),
+    val eventProposal: EventProposal? = null,
 )
 
 data class EnvironmentEvent(
@@ -44,9 +64,18 @@ data class EnvironmentEvent(
     val confidence: String = EnvironmentObservation.STATUS_OBSERVED,
     val from: String = "",
     val to: String = "",
+    val location: String = "",
     val objects: List<String> = emptyList(),
     val actions: List<String> = emptyList(),
+    val actors: List<String> = emptyList(),
     val episodeCount: Int = 1,
+    val episodeIds: List<String> = emptyList(),
+    val relations: List<EventRelation> = emptyList(),
+    val observedClaims: List<ObservedClaim> = emptyList(),
+    val topologyNodeId: String = "",
+    val poseX: Float = 0f,
+    val poseY: Float = 0f,
+    val poseZ: Float = 0f,
 )
 
 data class EnvironmentState(
@@ -85,14 +114,18 @@ data class EnvironmentState(
             val obs = recentObservations.filter { it.status != EnvironmentObservation.STATUS_STALE }.take(4)
             if (obs.isNotEmpty()) {
                 add("【近期观察】" + obs.joinToString("；") { item ->
-                    val tag = if (item.kind == EnvironmentObservation.KIND_FLOOR) "楼层标识" else item.kind
+                    val tag = when (item.kind) {
+                        EnvironmentObservation.KIND_FLOOR -> "楼层标识"
+                        EnvironmentObservation.KIND_TEXT -> "可见文字"
+                        else -> item.kind
+                    }
                     "$tag=${item.value}"
                 })
             }
             activeEvent?.let { event ->
                 val body = event.summary.ifBlank { event.hypothesis }
                 if (body.isNotBlank()) {
-                    val mark = if (event.confidence == EnvironmentObservation.STATUS_CONFIRMED) "看到" else "推断"
+                    val mark = EnvironmentObservation.evidenceMark(event.confidence)
                     add("【当前活动】$body（$mark）")
                 }
             }
@@ -113,6 +146,24 @@ data class EnvironmentState(
 
     fun compactLine(): String = promptBlock()
 
+    fun eventThreadPrompt(limit: Int = 360): String {
+        val lines = buildList {
+            activeEvent?.let { event ->
+                add(
+                    "上一活动 id=${event.id} summary=${event.summary} " +
+                        "confidence=${event.confidence} location=${event.location.ifBlank { event.to }} " +
+                        "episodes=${event.episodeCount}",
+                )
+            }
+            if (recentEvents.isNotEmpty()) {
+                add("近期事件 " + recentEvents.take(3).joinToString("；") { "${it.id}:${it.summary}" })
+            }
+        }
+        if (lines.isEmpty()) return ""
+        val text = lines.joinToString("\n")
+        return if (text.length <= limit) text else text.take(limit - 1) + "…"
+    }
+
     fun stale(now: Long, maxAgeMs: Long = 5_000L): Boolean {
         if (currentBrief.isBlank()) return true
         if (updatedAt <= 0L) return true
@@ -132,5 +183,13 @@ object EnvironmentStore {
 
     fun replace(next: EnvironmentState) {
         state = next
+    }
+
+    fun update(block: (EnvironmentState) -> EnvironmentState): EnvironmentState {
+        synchronized(this) {
+            val next = block(state)
+            state = next
+            return next
+        }
     }
 }

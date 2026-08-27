@@ -11,6 +11,11 @@ data class EnvironmentEpisode(
     val brightness: Float,
     val visualFromAnchor: Float,
     val bestFrameAt: Long,
+    val poseX: Float = 0f,
+    val poseY: Float = 0f,
+    val poseZ: Float = 0f,
+    val yawDeg: Float = 0f,
+    val tracking: String = "",
 )
 
 data class ProbeFrame(
@@ -35,7 +40,12 @@ data class ProbeState(
 
 sealed class ProbeSignal {
     data object Hold : ProbeSignal()
-    data class TransitionStart(val atMs: Long, val visual: Float) : ProbeSignal()
+    data class TransitionStart(
+        val atMs: Long,
+        val visual: Float,
+        val heading: Float = 0f,
+        val ocr: Float = 0f,
+    ) : ProbeSignal()
     data class Settled(val episode: EnvironmentEpisode) : ProbeSignal()
 }
 

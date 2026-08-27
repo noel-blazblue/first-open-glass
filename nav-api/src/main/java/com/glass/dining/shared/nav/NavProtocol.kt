@@ -25,6 +25,7 @@ object NavProtocol {
     const val CMD_FRAME = "frame"
     const val CMD_FRAME_OK = "frame.ok"
     const val CMD_POSE = "pose"
+    const val DC_POSE = "pose"
     const val CMD_ERROR = "error"
     const val CMD_MIC_ON = "mic.on"
     const val CMD_MIC_OFF = "mic.off"
@@ -53,6 +54,7 @@ object NavProtocol {
     const val RTC_FPS = 15
     const val RTC_MAX_BITRATE = 2_500_000
     const val RTC_MIN_BITRATE = 1_200_000
+    const val POSE_WIFI_TICK_MS = 200L
 
     const val SKILL_NONE = "none"
     const val SKILL_BROWSE = "browse"
@@ -77,6 +79,9 @@ object NavProtocol {
             .put("headingDeg", hint.headingDeg.toDouble())
             .put("elevationDeg", hint.elevationDeg.toDouble())
             .put("stage", hint.stage)
+            .put("sessionId", hint.sessionId)
+            .put("tracking", hint.tracking)
+            .put("waypoints", hint.waypoints)
             .toString()
     }
 
@@ -94,6 +99,9 @@ object NavProtocol {
                 headingDeg = obj.optDouble("headingDeg").toFloat(),
                 elevationDeg = obj.optDouble("elevationDeg").toFloat(),
                 stage = obj.optString("stage"),
+                sessionId = obj.optString("sessionId"),
+                tracking = obj.optString("tracking"),
+                waypoints = obj.optString("waypoints"),
             )
         } catch (_: Exception) {
             NavHint(text = raw.take(24))
@@ -105,6 +113,11 @@ object NavProtocol {
             .put("yaw", pose.yaw.toDouble())
             .put("pitch", pose.pitch.toDouble())
             .put("roll", pose.roll.toDouble())
+            .put("x", pose.x.toDouble())
+            .put("y", pose.y.toDouble())
+            .put("z", pose.z.toDouble())
+            .put("tracking", pose.tracking)
+            .put("tNs", pose.tNs)
             .toString()
     }
 
@@ -116,6 +129,11 @@ object NavProtocol {
                 yaw = obj.optDouble("yaw").toFloat(),
                 pitch = obj.optDouble("pitch").toFloat(),
                 roll = obj.optDouble("roll").toFloat(),
+                x = obj.optDouble("x").toFloat(),
+                y = obj.optDouble("y").toFloat(),
+                z = obj.optDouble("z").toFloat(),
+                tracking = obj.optString("tracking"),
+                tNs = obj.optLong("tNs"),
             )
         } catch (_: Exception) {
             raw.toFloatOrNull()?.let { NavPose(yaw = it) }
@@ -283,6 +301,9 @@ object NavProtocol {
         headingDeg: Float = 0f,
         elevationDeg: Float = 0f,
         stage: String = "",
+        sessionId: String = "",
+        tracking: String = "",
+        waypoints: String = "",
     ): String {
         return JSONObject()
             .put("title", title)
@@ -299,6 +320,9 @@ object NavProtocol {
             .put("headingDeg", headingDeg.toDouble())
             .put("elevationDeg", elevationDeg.toDouble())
             .put("stage", stage)
+            .put("sessionId", sessionId)
+            .put("tracking", tracking)
+            .put("waypoints", waypoints)
             .toString()
     }
 
@@ -325,6 +349,9 @@ object NavProtocol {
                 headingDeg = obj.optDouble("headingDeg").toFloat(),
                 elevationDeg = obj.optDouble("elevationDeg").toFloat(),
                 stage = obj.optString("stage"),
+                sessionId = obj.optString("sessionId"),
+                tracking = obj.optString("tracking"),
+                waypoints = obj.optString("waypoints"),
             )
         } catch (_: Exception) {
             HudLines(speech = raw.take(24), layout = LAYOUT_TALK)
@@ -373,15 +400,23 @@ data class NavHint(
     val headingDeg: Float = 0f,
     val elevationDeg: Float = 0f,
     val stage: String = "",
+    val sessionId: String = "",
+    val tracking: String = "",
+    val waypoints: String = "",
 ) {
     val visual: Boolean
-        get() = mode.isNotBlank()
+        get() = mode.isNotBlank() && tracking != "tracking_lost"
 }
 
 data class NavPose(
     val yaw: Float = 0f,
     val pitch: Float = 0f,
     val roll: Float = 0f,
+    val x: Float = 0f,
+    val y: Float = 0f,
+    val z: Float = 0f,
+    val tracking: String = "",
+    val tNs: Long = 0L,
 )
 
 data class HudLines(
@@ -399,13 +434,16 @@ data class HudLines(
     val headingDeg: Float = 0f,
     val elevationDeg: Float = 0f,
     val stage: String = "",
+    val sessionId: String = "",
+    val tracking: String = "",
+    val waypoints: String = "",
 ) {
     val isTalk: Boolean
         get() = layout == NavProtocol.LAYOUT_TALK
     val isNav: Boolean
         get() = layout == NavProtocol.LAYOUT_NAV || skill == NavProtocol.SKILL_NAV
     val visual: Boolean
-        get() = isNav && mode.isNotBlank()
+        get() = isNav && mode.isNotBlank() && tracking != "tracking_lost"
 
     companion object {
         fun idle(): HudLines = HudLines()
@@ -437,6 +475,9 @@ data class HudLines(
                 headingDeg = hint.headingDeg,
                 elevationDeg = hint.elevationDeg,
                 stage = hint.stage,
+                sessionId = hint.sessionId,
+                tracking = hint.tracking,
+                waypoints = hint.waypoints,
             )
         }
     }

@@ -74,7 +74,7 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
             )
         }
         Spacer(Modifier.height(12.dp))
-        Text("Agent Context（每轮注入，与连接无关）", color = TextMain, fontSize = 14.sp)
+        Text("Agent Context（对话前与开流采样时刷新）", color = TextMain, fontSize = 14.sp)
         Text(
             state.agentContext.ifBlank { "还没有世界状态。开眼镜画面并说话后会出现。" },
             color = HudColors.green,
@@ -87,6 +87,22 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
                 .background(Panel, RoundedCornerShape(12.dp))
                 .padding(12.dp),
         )
+        if (state.agentDebug.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Text("诊断状态", color = TextDim, fontSize = 12.sp)
+            Text(
+                state.agentDebug,
+                color = TextDim,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                lineHeight = 14.sp,
+                modifier = Modifier
+                    .padding(top = 6.dp)
+                    .fillMaxWidth()
+                    .background(Panel, RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+            )
+        }
         Spacer(Modifier.height(12.dp))
         TalkButton(talking = state.talking) { viewModel.toggleTalk() }
         Spacer(Modifier.height(8.dp))

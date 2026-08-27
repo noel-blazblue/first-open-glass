@@ -70,14 +70,25 @@ object PhoneAi {
         return vision(jpeg, task, ocrText) ?: AiReply("这张画面我这次没认出来。", "未认出", false)
     }
 
-    fun envLook(jpeg: ByteArray, ocrText: String = "", previous: String = ""): String? {
+    fun envLook(
+        jpeg: ByteArray,
+        ocrText: String = "",
+        previous: String = "",
+        eventThread: String = "",
+    ): String? {
         if (!ready || jpeg.isEmpty()) return null
         val b64 = Base64.encodeToString(jpeg, Base64.NO_WRAP)
         val prompt = buildString {
-            append("根据画面输出 JSON。sceneBrief 只写现在看着什么，不要把楼层写进场景正文。")
-            append("只有看见楼层/电梯/导览标识时才填 floorCandidate。")
+            append("根据画面输出 JSON，必须包含 observation、navigation、eventProposal 三个子对象。")
+            append("observation.sceneBrief 只写现在看着什么，不要把楼层写进场景正文。")
+            append("只有看见楼层/电梯/导览标识时才填 navigation.floorCandidate。")
+            append("navigation 只写画面里能看见的空间和导视，没有就留空，不要编路线。")
+            append("eventProposal 只描述活动生命周期，不要发明输入里没有的事件 id。")
             if (previous.isNotBlank()) {
                 append("\n上一份环境：").append(previous.take(300))
+            }
+            if (eventThread.isNotBlank()) {
+                append("\n上一活动线程：").append(eventThread.take(360))
             }
             if (ocrText.isNotBlank()) {
                 append("\n端侧OCR参考：").append(ocrText.take(240))

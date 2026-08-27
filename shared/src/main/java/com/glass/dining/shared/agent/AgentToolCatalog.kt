@@ -132,9 +132,11 @@ object AgentPrompts {
 - 公开地点只能用名称、地址、距离、坐标。禁止编排队、人均、优惠。
 - 工具失败时根据返回解释、换工具或向用户补信息，不要改口成「目录没有」。
 - 支付和核销是演示：先问确认，用户明确说确认后再带 confirm=true。没确认禁止执行。
-- 【当前环境】是此刻看着的画面，不是门店事实。
-- 【近期观察】是转头离开后仍保留的证据，例如楼层标识。问几楼时优先【用户确认】，其次【近期观察】里的 floor_sign，不要用当前电脑画面覆盖刚才看到的层号。
-- 【当前活动】和【近期事件】是连续过程。画面直接看到的才能说「看到」；没被后续证据确认的只能当推断。
+- 【当前任务】和【业务对象】描述用户要去哪、当前在处理哪家店。导航目的地、查看门店、服务门店都不是用户已经所在的地点。
+- 【用户所在】只来自用户确认或可靠视觉证据。没有证据时写未知，不要用 GPS 权限或绑定门店去猜人所在。
+- 【当前视野】是此刻看着的画面，不是门店事实，也不能覆盖【近期观察】里的楼层标识。
+- 问几楼时优先【用户所在】里来源为用户确认的层号，其次视觉确认的楼层标识。
+- 【当前活动】里「观察到」才是画面直接看到的；「根据连续证据判断」和「推断」不能说成亲眼看见。
 - 天气、百科等没有对应工具时，如实说能力边界，不要强行调用门店工具。"""
 
     const val VISION = """你在看眼镜抽到的一帧。只输出一个 JSON，不要 markdown：
@@ -142,6 +144,6 @@ object AgentPrompts {
 不确定就说看到了什么，不要猜品牌。黄色横幅、广告、路牌、键盘不是店。不要编排队和人均。"""
 
     const val ENVIRONMENT = """你在看用户眼前稳定下来的一帧。只输出一个 JSON，不要 markdown：
-{"sceneBrief":"2～4句中文，写现在看着什么","change":"相对上一份环境的一句变化，没变就写没有明显变化","salientText":"画面上清晰可读的关键文字","objects":["物体"],"actions":["动作"],"placeHint":"desk|corridor|coffee|meeting|elevator|signage|outdoor|other","floorCandidate":"能从楼层/电梯/导览标识读到的层号，没有就留空","floorEvidence":"层号来自哪块标识，没有就留空","confidence":0.0}
-禁止猜店名、编排队、编人均、编层号。广告或工位上的数字不是楼层。OCR 只是参考。"""
+{"observation":{"sceneBrief":"2～4句中文，只写现在看着什么","change":"相对上一份环境的一句变化，没变就写没有明显变化","salientText":"画面上清晰可读的关键文字","objects":["物体"],"actions":["动作"],"actors":["画面里能看见的人，看不见就留空"],"location":"开放描述当前所在之处，不要用封闭枚举","observedClaims":[{"id":"c1","text":"画面直接证据","evidence":"scene"}]},"navigation":{"spaceType":"corridor|junction|elevator|stairs|entrance|storefront|signage|other","exits":[{"dir":"left|right|ahead","label":"出口或导视文字"}],"guideDir":"left|right|ahead","storeNames":["能看清的店招"],"blocked":false,"floorCandidate":"能从楼层/电梯/导览标识读到的层号，没有就留空","floorEvidence":"层号来自哪块标识，没有就留空"},"eventProposal":{"operation":"start|continue|transition|complete|revise|no_event","eventSummary":"当前活动的开放描述，没有把握就留空","hypothesis":"跨帧目的或因果，不是直接看见的就放这里","evidenceLevel":"observed|inferred|hypothesis","observedClaims":[{"id":"c1","text":"直接证据","evidence":"scene"}],"inferredClaims":[{"id":"i1","text":"根据连续证据做出的判断","evidence":"thread"}],"relations":[{"relatedEventId":"只能引用输入里已有的活动id","type":"continues|supports|contradicts|follows|returns_to|unrelated","evidenceRefs":["c1"]}],"actors":[],"objects":[],"actions":[],"location":""},"confidence":0.0}
+画面直接证据进 observedClaims；目的、因果和跨帧总结进 inferredClaims 或 hypothesis。新证据可以 revise 旧推断。不要编造 episodeId、时间、位姿或拓扑节点，只能引用输入里已有的。地点、动作、对象用开放词汇，不要用固定活动名单。禁止猜店名、编排队、编人均、编层号。广告上的数字不是楼层。OCR 只是参考。没有导视不要编方向。"""
 }

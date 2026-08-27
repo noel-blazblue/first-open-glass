@@ -20,7 +20,7 @@ class DiningToolProvider(private val world: PhoneWorld) {
                 .put("ok", false)
                 .put("error", "empty_catalog")
                 .put("hint", "search_nearby_places")
-                .put("message", "本地餐饮目录是空的，请搜索附近公开地点")
+                .put("message", "本地餐饮目录是空的，去搜附近公开地点")
                 .toString()
         }
         if (world.session.activeSkill == ActiveSkill.NAV) {
@@ -33,7 +33,7 @@ class DiningToolProvider(private val world: PhoneWorld) {
                 .put("ok", false)
                 .put("error", "empty_catalog")
                 .put("hint", "search_nearby_places")
-                .put("message", "本地目录没有合适的店，请搜索附近公开地点")
+                .put("message", "本地目录没有合适的店，去搜附近公开地点")
                 .toString()
         world.recommendedThisTurn = true
         world.rememberSpokenStore()
@@ -87,7 +87,7 @@ class DiningToolProvider(private val world: PhoneWorld) {
         world.selectedThisTurn = true
         world.rememberSpokenStore()
         world.publishMatch(result, "选定")
-        return facts(result).put("message", "已选${result.store.shortName}").toString()
+        return facts(result).put("message", "已选定${result.store.shortName}，这是当前查看门店，不是用户所在位置").toString()
     }
 
     private fun askStore(args: JSONObject): String {

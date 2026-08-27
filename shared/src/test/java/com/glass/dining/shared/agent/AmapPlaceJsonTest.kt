@@ -66,4 +66,33 @@ class DegradedPlannerTest {
         assertTrue(turn.toolCalls.isEmpty())
         assertTrue(turn.content.contains("密钥") || turn.content.contains("天气") || turn.content.contains("问答"))
     }
+
+    @Test
+    fun payConfirmCallsCheckout() {
+        val turn = DegradedPlanner.turn(
+            listOf(LlmMessage("user", "确认付款")),
+            WorldContext(pendingPay = "待付88元给巴奴"),
+        )
+        assertEquals("checkout", turn.toolCalls.single().name)
+        assertTrue(turn.toolCalls.single().argumentsJson.contains("confirm"))
+    }
+
+    @Test
+    fun developerToolMessageIsNotSpoken() {
+        val turn = DegradedPlanner.turn(
+            listOf(
+                LlmMessage("user", "附近有药店吗"),
+                LlmMessage(
+                    "tool",
+                    """{"ok":false,"error":"empty_catalog","message":"请调用 search_nearby_places"}""",
+                    toolCallId = "1",
+                ),
+            ),
+            WorldContext(modelReady = true),
+        )
+        assertTrue(turn.toolCalls.isEmpty())
+        assertFalse(turn.content.contains("请调用"))
+        assertFalse(turn.content.contains("search_nearby_places"))
+        assertTrue(turn.content.contains("搜") || turn.content.contains("查"))
+    }
 }

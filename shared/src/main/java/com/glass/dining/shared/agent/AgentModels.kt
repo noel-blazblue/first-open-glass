@@ -60,22 +60,45 @@ data class SceneObservation(
 
 data class WorldContext(
     val skill: String = "none",
-    val currentPlace: PlaceRef? = null,
-    val candidates: List<PlaceRef> = emptyList(),
+    val boundPlace: PlaceRef? = null,
+    val disambiguation: List<PlaceRef> = emptyList(),
+    val recentSearch: List<PlaceRef> = emptyList(),
     val observation: SceneObservation? = null,
-    val hasGps: Boolean = false,
+    val gpsPermission: Boolean = false,
+    val hasGpsFix: Boolean = false,
     val gpsLat: Double? = null,
     val gpsLng: Double? = null,
     val catalogCount: Int = 0,
     val pendingPay: String = "",
     val pendingCoupon: String = "",
     val spokenFloor: String = "",
-    val currentFloor: String = "",
     val environment: EnvironmentState? = null,
     val navActive: Boolean = false,
     val modelReady: Boolean = false,
     val capabilities: List<String> = emptyList(),
-)
+    val navArrived: Boolean = false,
+) {
+    val hasGps: Boolean get() = gpsPermission
+    val currentFloor: String
+        get() = environment?.usableFloor?.ifBlank { spokenFloor }.orEmpty().ifBlank { spokenFloor }
+
+    val businessRole: String
+        get() = when {
+            boundPlace == null -> ROLE_NONE
+            navActive && navArrived -> ROLE_APPROACHING
+            navActive -> ROLE_DESTINATION
+            skill == "menu" || skill == "coupon" || skill == "pay" -> ROLE_SERVING
+            else -> ROLE_VIEWING
+        }
+
+    companion object {
+        const val ROLE_NONE = "none"
+        const val ROLE_DESTINATION = "destination"
+        const val ROLE_VIEWING = "viewing"
+        const val ROLE_SERVING = "serving"
+        const val ROLE_APPROACHING = "approaching"
+    }
+}
 
 data class LlmToolCall(
     val id: String,
