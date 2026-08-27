@@ -1,5 +1,6 @@
 package com.glass.dining.shared.indoor
 
+import com.glass.dining.shared.nav.LandmarkHint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,9 +12,9 @@ class OccupancyTest {
         val pose = Pose3()
         grid.recenter(pose)
         grid.markCorridor(pose, 6f)
-        grid.markBlocked(pose, 0f, 2.2f)
+        grid.markBlocked(pose, 0f, 6f)
         val pts = LocalPath.conservative(grid, pose, 0f)
-        assertTrue(pts.none { it.y in 2.0f..2.5f })
+        assertTrue(pts.none { it.y in 5.5f..6.5f })
     }
 
     @Test
@@ -88,7 +89,26 @@ class TopologyBuilderTest {
 
 class ExplorationTest {
     @Test
-    fun lostTrackingAsksScan() {
+    fun briefLostKeepsGuideWithoutLostCopy() {
+        val hint = ExplorationPlanner().decide(
+            LiveTopology(),
+            SemanticObservation(),
+            Pose3(),
+            TrackQuality.LOST,
+            "海底捞",
+            "1",
+            "",
+            OccupancyGrid(),
+            hadGoodTrack = true,
+            lostMs = 200L,
+        )
+        assertTrue(hint.text.contains("定位丢失").not())
+        assertTrue(hint.tracking != "tracking_lost")
+        assertEquals("ground", hint.mode)
+    }
+
+    @Test
+    fun sustainedLostAsksScanWithoutLostCopy() {
         val hint = ExplorationPlanner().decide(
             LiveTopology(),
             SemanticObservation(),
@@ -98,9 +118,31 @@ class ExplorationTest {
             "4",
             "1",
             OccupancyGrid(),
+            hadGoodTrack = true,
+            lostMs = 1600L,
         )
         assertTrue(hint.scanRequired)
-        assertEquals("tracking_lost", hint.tracking)
+        assertTrue(hint.tracking != "tracking_lost")
+        assertTrue(hint.text.contains("定位丢失").not())
+        assertTrue(hint.text.contains("环视") || hint.text.contains("导视"))
+        assertEquals("ground", hint.mode)
+    }
+
+    @Test
+    fun coldStartLostIsNotTrackingLost() {
+        val hint = ExplorationPlanner().decide(
+            LiveTopology(),
+            SemanticObservation(),
+            Pose3(),
+            TrackQuality.LOST,
+            "海底捞",
+            "1",
+            "",
+            OccupancyGrid(),
+            hadGoodTrack = false,
+        )
+        assertTrue(hint.tracking != "tracking_lost")
+        assertTrue(hint.text.contains("环视") || hint.text.contains("导视"))
     }
 
     @Test
@@ -143,7 +185,7 @@ class ExplorationTest {
 
 class IndoorHintBinderTest {
     @Test
-    fun scanRequiredHidesGroundMode() {
+    fun scanRequiredKeepsGroundMode() {
         val guide = IndoorHintBinder.bind(
             ocr = null,
             explore = ExploreHint(text = "请缓慢环视", scanRequired = true, mode = "ground"),
@@ -154,40 +196,157 @@ class IndoorHintBinderTest {
             remaining = 0,
             stage = "seek_store",
         )
-        assertEquals("", guide.mode)
+        assertEquals("ground", guide.mode)
         assertTrue(guide.scanRequired)
+        assertTrue(guide.waypoints.isEmpty())
+        assertEquals(0, guide.meters)
     }
 
     @Test
-    fun lostTrackingHasNoWaypoints() {
+    fun seekExitKeepsGroundMode() {
         val guide = IndoorHintBinder.bind(
-            ocr = null,
+            ocr = LandmarkHint(text = "找出口出门", mode = "ground", turn = "straight"),
+            explore = ExploreHint(text = "请缓慢环视找导视", scanRequired = true, mode = "ground"),
+            pose = Pose3(),
+            occupancy = OccupancyGrid(),
+            quality = TrackQuality.WEAK,
+            storeName = "海底捞",
+            remaining = 400,
+            stage = "seek_exit",
+        )
+        assertEquals("ground", guide.mode)
+        assertEquals("找出口出门", guide.text)
+        assertTrue(guide.waypoints.isEmpty())
+        assertEquals(0, guide.meters)
+    }
+
+    @Test
+    fun seekExitFlashLostKeepsExitCopyAndGround() {
+        val guide = IndoorHintBinder.bind(
+            ocr = LandmarkHint(text = "找出口出门", mode = "ground", turn = "straight"),
             explore = ExploreHint(text = "定位丢失", tracking = "tracking_lost", mode = "", scanRequired = true),
             pose = Pose3(),
             occupancy = OccupancyGrid(),
             quality = TrackQuality.LOST,
             storeName = "海底捞",
-            remaining = 0,
-            stage = "seek_store",
+            remaining = 400,
+            stage = "seek_exit",
         )
+        assertEquals("ground", guide.mode)
+        assertEquals("找出口出门", guide.text)
+        assertTrue(guide.text.contains("定位丢失").not())
         assertTrue(guide.waypoints.isEmpty())
-        assertEquals("tracking_lost", guide.tracking)
+        assertEquals(0, guide.meters)
+    }
+
+    @Test
+    fun seekExitEntrancePointsAheadWithoutFakeMeters() {
+        val explore = ExplorationPlanner().decide(
+            topology = LiveTopology(),
+            observation = SemanticObservation(spaceType = "entrance", confidence = 0.8f),
+            pose = Pose3(),
+            quality = TrackQuality.GOOD,
+            goalName = "海底捞",
+            goalFloor = "1",
+            currentFloor = "",
+            occupancy = OccupancyGrid(),
+            stage = "seek_exit",
+        )
+        assertTrue(explore.hasGuide)
+        assertEquals(0, explore.meters)
+        val guide = IndoorHintBinder.bind(
+            ocr = LandmarkHint(text = "找出口出门", mode = "ground", turn = "straight"),
+            explore = explore,
+            pose = Pose3(),
+            occupancy = OccupancyGrid(),
+            quality = TrackQuality.GOOD,
+            storeName = "海底捞",
+            remaining = 400,
+            stage = "seek_exit",
+        )
+        assertTrue(guide.waypoints.isNotEmpty())
+        assertEquals(0, guide.meters)
+        assertEquals("找出口出门", guide.text)
+    }
+
+    @Test
+    fun seekExitAheadExitUsesGuideDir() {
+        val explore = ExplorationPlanner().decide(
+            topology = LiveTopology(),
+            observation = SemanticObservation(
+                spaceType = "corridor",
+                exits = listOf(ExitHint(dir = "ahead", label = "大门")),
+                guideDir = "ahead",
+                confidence = 0.7f,
+            ),
+            pose = Pose3(),
+            quality = TrackQuality.GOOD,
+            goalName = "海底捞",
+            goalFloor = "1",
+            currentFloor = "",
+            occupancy = OccupancyGrid(),
+            stage = "seek_exit",
+        )
+        assertTrue(explore.hasGuide)
+        assertEquals(0f, explore.headingDeg, 0.1f)
+        assertEquals(0, explore.meters)
+        val guide = IndoorHintBinder.bind(
+            ocr = LandmarkHint(text = "找出口出门", mode = "ground"),
+            explore = explore,
+            pose = Pose3(),
+            occupancy = OccupancyGrid(),
+            quality = TrackQuality.GOOD,
+            storeName = "海底捞",
+            remaining = 400,
+            stage = "seek_exit",
+        )
+        assertTrue(guide.waypoints.isNotEmpty())
+        assertEquals(0, guide.meters)
     }
 }
 
 class WorldAnchorTest {
     @Test
-    fun lostQualityHidesChevrons() {
+    fun lostQualityStillHasChevrons() {
         val pts = WorldAnchor.chevrons(Pose3(), 0f, OccupancyGrid(), TrackQuality.LOST)
-        assertTrue(pts.isEmpty())
+        assertTrue(pts.isNotEmpty())
+        assertTrue(pts.all { it.z < -1f })
     }
 
     @Test
-    fun aheadPointProjectsIntoHud() {
+    fun groundPointSitsAtEyeHeightBelow() {
         val pose = Pose3()
-        val world = pointAhead(pose, 3.6f, 0f)
+        val world = pointAhead(pose, 6f, 0f)
+        assertTrue(world.z < 0f)
+        assertEquals(-SensorCalibration.rokidGlass3().eyeHeightM, world.z, 0.05f)
         val pix = WorldAnchor.project(world, pose, SensorCalibration.rokidGlass3(), 480f, 640f)
         assertTrue(pix != null)
         assertTrue(pix!!.first in 100f..380f)
+    }
+
+    @Test
+    fun yawMovesProjectionOppositeOnScreen() {
+        val calib = SensorCalibration.rokidGlass3()
+        val world = pointAhead(Pose3(), 6f, 0f)
+        val center = WorldAnchor.project(world, Pose3(), calib, 480f, 640f)!!
+        val turned = Pose3(orientation = Quat.fromYawPitchRoll(20f, 0f, 0f))
+        val shifted = WorldAnchor.project(world, turned, calib, 480f, 640f)!!
+        assertTrue(shifted.first < center.first)
+    }
+
+    @Test
+    fun nearerChevronIsLowerAndLarger() {
+        val pose = Pose3()
+        val calib = SensorCalibration.rokidGlass3()
+        val drawn = GroundGuide.project(
+            listOf(pointAhead(pose, 6f), pointAhead(pose, 12f)),
+            pose,
+            calib,
+            480f,
+            640f,
+        )
+        assertEquals(2, drawn.size)
+        assertTrue(drawn[0].y > drawn[1].y)
+        assertTrue(drawn[0].size > drawn[1].size)
     }
 }

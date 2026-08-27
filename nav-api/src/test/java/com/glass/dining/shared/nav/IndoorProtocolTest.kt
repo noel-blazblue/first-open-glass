@@ -59,4 +59,18 @@ class IndoorProtocolTest {
         assertEquals(IndoorProtocol.TRACK_GOOD, pose.tracking)
         assertEquals(42L, pose.tNs)
     }
+
+    @Test
+    fun hudTalkPoseRoundTrip() {
+        val json = NavProtocol.cardJson(
+            title = "",
+            layout = NavProtocol.LAYOUT_TALK,
+            speech = "思考中",
+            pose = "think",
+        )
+        val lines = NavProtocol.parseCard(json)
+        assertEquals("think", lines.pose)
+        assertEquals("思考中", lines.speech)
+        assertTrue(lines.isTalk)
+    }
 }

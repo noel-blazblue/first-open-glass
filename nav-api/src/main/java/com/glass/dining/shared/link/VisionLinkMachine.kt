@@ -43,6 +43,21 @@ class VisionLinkMachine(
         return enterGlassReady()
     }
 
+    fun onGlassLost(): List<LinkEffect> {
+        if (!snapshot.open) return emptyList()
+        val attempt = snapshot.attemptId
+        lastOffer = null
+        snapshot = snapshot.copy(
+            phase = LinkPhase.GlassStarting,
+            elapsedMs = elapsed(),
+            glassApp = "正在启动",
+            glassWifi = "未知",
+            direct = "未建组",
+            rtc = "未开",
+        )
+        return listOf(LinkEffect.Cleanup(attempt), LinkEffect.StartGlass(attempt))
+    }
+
     fun onGroupReady(offer: P2pOffer): List<LinkEffect> {
         if (!snapshot.open) return emptyList()
         if (!P2pJoinPolicy.acceptAttempt(snapshot.attemptId, offer.attemptId)) return emptyList()

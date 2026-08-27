@@ -1,6 +1,7 @@
 package com.glass.dining.shared.hud
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,6 +12,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -19,6 +26,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -26,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.sin
 
 @Composable
 fun GlassesHudPreview(
@@ -68,6 +79,15 @@ fun GlassesHudPreview(
 @Composable
 private fun TalkPreview(card: HudCard, modifier: Modifier = Modifier) {
     val lines = HudCard.wrapSpeech(card.speech)
+    val pose = TalkPose.of(card.pose, card.speech)
+    var tSec by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(Unit) {
+        val start = withFrameNanos { it }
+        while (true) {
+            val now = withFrameNanos { it }
+            tSec = (now - start) / 1_000_000_000f
+        }
+    }
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -78,21 +98,15 @@ private fun TalkPreview(card: HudCard, modifier: Modifier = Modifier) {
         lines.forEach { line ->
             PreviewLine(line, 18, FontWeight.Normal)
         }
-        Canvas(
+        Image(
+            painter = painterResource(ReimuHud.resId(pose)),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
             modifier = Modifier
-                .padding(top = 12.dp)
-                .size(36.dp),
-        ) {
-            val stroke = Stroke(width = 2.5.dp.toPx())
-            val r = size.minDimension / 2f - stroke.width
-            val c = Offset(size.width / 2f, size.height / 2f)
-            drawCircle(color = HudColors.green, radius = r, center = c, style = stroke)
-            val eyeY = c.y - r * 0.12f
-            val eyeR = 2.2.dp.toPx()
-            val gap = r * 0.28f
-            drawCircle(color = HudColors.green, radius = eyeR, center = Offset(c.x - gap, eyeY))
-            drawCircle(color = HudColors.green, radius = eyeR, center = Offset(c.x + gap, eyeY))
-        }
+                .padding(top = 4.dp)
+                .size(width = 92.dp, height = 124.dp)
+                .graphicsLayer { translationY = sin(tSec * 2.4f) * 3f },
+        )
     }
 }
 
@@ -131,27 +145,16 @@ private fun NavPreview(card: HudCard, modifier: Modifier = Modifier) {
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawVisual(card: HudCard) {
     val color = HudColors.green
     val cx = size.width / 2f
-    if (card.mode == "elevator" || card.mode == "stairs" || card.mode == "corridor" || card.mode == "exit") {
-        val x = (cx + (card.headingDeg / 15f) * size.width * 0.28f).coerceIn(size.width * 0.2f, size.width * 0.8f)
-        val y = size.height * 0.42f
-        val s = size.minDimension * 0.22f
-        val p = Path().apply {
-            moveTo(x, y - s)
-            lineTo(x - s * 0.62f, y + s * 0.38f)
-            lineTo(x + s * 0.62f, y + s * 0.38f)
-            close()
-        }
-        drawPath(p, color)
-        return
-    }
-    val distances = listOf(0.28f, 0.48f, 0.68f)
-    distances.forEach { t ->
+    val shift = (card.headingDeg / 15f).coerceIn(-0.35f, 0.35f) * size.width * 0.28f
+    val distances = listOf(0.58f, 0.44f, 0.32f)
+    distances.forEachIndexed { index, t ->
         val y = size.height * t
-        val half = size.width * (0.38f - t * 0.18f)
+        val half = size.width * (0.22f - index * 0.04f)
+        val x = cx + shift * (index + 1) * 0.35f
         val p = Path().apply {
-            moveTo(cx - half, y + 8f)
-            lineTo(cx, y - 10f)
-            lineTo(cx + half, y + 8f)
+            moveTo(x - half, y + 8f)
+            lineTo(x, y - 10f)
+            lineTo(x + half, y + 8f)
         }
         drawPath(p, color, style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
     }

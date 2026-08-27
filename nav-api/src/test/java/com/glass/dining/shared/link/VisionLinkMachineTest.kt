@@ -118,6 +118,39 @@ class VisionLinkMachineTest {
     }
 
     @Test
+    fun glassLostReturnsToStarting() {
+        val machine = VisionLinkMachine { 9_000 }
+        machine.begin(cxrReady = true, glassReady = true)
+        machine.onGroupReady(sampleOffer(machine.snapshot.attemptId))
+        assertEquals(LinkPhase.PeerJoining, machine.snapshot.phase)
+        val effects = machine.onGlassLost()
+        assertEquals(LinkPhase.GlassStarting, machine.snapshot.phase)
+        assertTrue(effects.any { it is LinkEffect.Cleanup })
+        assertTrue(effects.any { it is LinkEffect.StartGlass })
+        assertTrue(effects.none { it is LinkEffect.SendOffer })
+        val afterReady = machine.onGlassReady()
+        assertTrue(afterReady.any { it is LinkEffect.CreateGroup })
+        assertFalse(afterReady.any { it is LinkEffect.SendOffer })
+    }
+
+    @Test
+    fun glassLostWhileIdleIsNoOp() {
+        val machine = VisionLinkMachine { 10_000 }
+        assertTrue(machine.onGlassLost().isEmpty())
+        assertEquals(LinkPhase.Idle, machine.snapshot.phase)
+    }
+
+    @Test
+    fun glassLostWhileStartingStillStarts() {
+        val machine = VisionLinkMachine { 11_000 }
+        machine.begin(cxrReady = true, glassReady = false)
+        val effects = machine.onGlassLost()
+        assertEquals(LinkPhase.GlassStarting, machine.snapshot.phase)
+        assertTrue(effects.any { it is LinkEffect.StartGlass })
+        assertTrue(effects.any { it is LinkEffect.Cleanup })
+    }
+
+    @Test
     fun protocolKeepsAttemptId() {
         val offer = P2pOffer("DIRECT-AB", "passpass", "192.168.49.1", "aa:bb", "phone", "a9-1")
         val parsed = NavProtocol.parseP2pOffer(NavProtocol.p2pOfferJson(offer))

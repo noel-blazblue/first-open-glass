@@ -58,6 +58,18 @@ object NlsClient {
             staticToken.isNotBlank() || (akId.isNotBlank() && akSecret.isNotBlank())
         )
 
+    fun currentToken(): String = token
+
+    fun websocketUrl(): String {
+        val host = gateway.trimEnd('/')
+        val scheme = when {
+            host.startsWith("https://") -> "wss://" + host.removePrefix("https://")
+            host.startsWith("http://") -> "ws://" + host.removePrefix("http://")
+            else -> "wss://$host"
+        }
+        return "$scheme/ws/v1"
+    }
+
     val statusLine: String
         get() = if (ready) "阿里云NLS" else "未配置阿里云语音"
 

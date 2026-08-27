@@ -33,4 +33,11 @@ class EchoFilterTest {
         assertTrue(EchoFilter.isEcho("  ", "开始走"))
         assertFalse(EchoFilter.isEcho("现在去几楼", ""))
     }
+
+    @Test
+    fun shortSharedCharsAreNotEcho() {
+        val spoken = "附近找到3家海底捞，你想去哪一家？"
+        assertFalse(EchoFilter.isEcho("去第一家。", spoken))
+        assertTrue(EchoFilter.isUserPartial("去第一家。", spoken))
+    }
 }

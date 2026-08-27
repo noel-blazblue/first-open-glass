@@ -83,6 +83,7 @@ object PhoneAi {
             append("observation.sceneBrief 只写现在看着什么，不要把楼层写进场景正文。")
             append("只有看见楼层/电梯/导览标识时才填 navigation.floorCandidate。")
             append("navigation 只写画面里能看见的空间和导视，没有就留空，不要编路线。")
+            append("看见可通行的门、出口、通道就填 spaceType=entrance 和 exits.dir，没看见不要编。")
             append("eventProposal 只描述活动生命周期，不要发明输入里没有的事件 id。")
             if (previous.isNotBlank()) {
                 append("\n上一份环境：").append(previous.take(300))

@@ -37,82 +37,105 @@ class IndoorNavCoordinator {
         private set
     var lastQuality: TrackQuality = TrackQuality.WEAK
         private set
-    var lastObservation: SemanticObservation = SemanticObservation()
+    @Volatile var lastObservation: SemanticObservation = SemanticObservation()
         private set
+    private val lock = Any()
     private var goalName: String = ""
     private var goalFloor: String = ""
+    private var everGood: Boolean = false
+    private var lostSinceElapsed: Long = 0L
 
-    fun start(goal: LandmarkGoal, gpsUsable: Boolean, spokenFloor: String = "") {
-        sessionId = "nav-${SystemClock.elapsedRealtime()}"
-        goalName = goal.shortName.ifBlank { goal.storeName }
-        goalFloor = goal.floor
-        lastPose = Pose3()
-        lastQuality = TrackQuality.WEAK
-        lastObservation = SemanticObservation()
-        occupancy.recenter(lastPose)
-        topology.start(sessionId)
-        landmarks.start(goal, gpsUsable, spokenFloor)
-        Log.i(TAG, "indoor start session=$sessionId gps=$gpsUsable floor=${goal.floor}")
+    fun start(goal: LandmarkGoal, gpsUsable: Boolean, spokenFloor: String = "", remaining: Int = 0) {
+        synchronized(lock) {
+            sessionId = "nav-${SystemClock.elapsedRealtime()}"
+            goalName = goal.shortName.ifBlank { goal.storeName }
+            lastPose = Pose3()
+            lastQuality = TrackQuality.WEAK
+            everGood = false
+            lostSinceElapsed = 0L
+            lastObservation = SemanticObservation()
+            occupancy.recenter(lastPose)
+            topology.start(sessionId)
+            landmarks.start(goal, gpsUsable, spokenFloor, remaining)
+            goalFloor = landmarks.targetFloor(goal)
+            Log.i(TAG, "indoor start session=$sessionId gps=$gpsUsable floor=${goal.floor} target=${goalFloor} remain=$remaining")
+        }
     }
 
     fun reset() {
-        landmarks.reset()
-        topology.start("")
-        occupancy.recenter(Pose3())
-        sessionId = ""
-        lastObservation = SemanticObservation()
+        synchronized(lock) {
+            landmarks.reset()
+            topology.start("")
+            occupancy.recenter(Pose3())
+            sessionId = ""
+            lastObservation = SemanticObservation()
+            lastQuality = TrackQuality.WEAK
+            everGood = false
+            lostSinceElapsed = 0L
+            goalFloor = ""
+        }
     }
 
     fun onPose(pose: NavPose) {
-        lastPose = Pose3(
-            tNs = pose.tNs,
-            position = Vec3(pose.x, pose.y, pose.z),
-            orientation = Quat.fromYawPitchRoll(pose.yaw, pose.pitch, pose.roll),
-        )
-        lastQuality = qualityOf(pose.tracking)
-        occupancy.recenter(lastPose, pose.pitch)
-        if (lastQuality == TrackQuality.GOOD) occupancy.markCorridor(lastPose)
+        synchronized(lock) {
+            lastPose = Pose3(
+                tNs = pose.tNs,
+                position = Vec3(pose.x, pose.y, pose.z),
+                orientation = Quat.fromYawPitchRoll(pose.yaw, pose.pitch, pose.roll),
+            )
+            lastQuality = qualityOf(pose.tracking)
+            if (lastQuality == TrackQuality.GOOD) everGood = true
+            if (lastQuality == TrackQuality.LOST) {
+                if (lostSinceElapsed == 0L) lostSinceElapsed = SystemClock.elapsedRealtime()
+            } else {
+                lostSinceElapsed = 0L
+            }
+            occupancy.recenter(lastPose, pose.pitch)
+            if (lastQuality == TrackQuality.GOOD) occupancy.markCorridor(lastPose)
+        }
     }
 
     fun onSemantic(episode: EnvironmentEpisode, look: EnvironmentLook, raw: String): SpatialEvidence {
-        val parsed = SemanticLook.parse(raw)
-        val observation = if (parsed.spaceType.isNotBlank() || parsed.confidence > 0f) {
-            parsed.copy(
-                episodeId = episode.id,
-                floorCandidate = parsed.floorCandidate.ifBlank { look.floorCandidate },
-                evidence = parsed.evidence.ifBlank { look.salientText },
-                confidence = if (parsed.confidence > 0f) parsed.confidence else look.confidence,
-                spaceType = parsed.spaceType.ifBlank { look.spaceType },
-                guideDir = parsed.guideDir.ifBlank { look.guideDir },
-                storeNames = parsed.storeNames.ifEmpty { look.storeNames },
-                blocked = parsed.blocked || look.blocked,
+        synchronized(lock) {
+            val parsed = SemanticLook.parse(raw)
+            val observation = if (parsed.spaceType.isNotBlank() || parsed.confidence > 0f) {
+                parsed.copy(
+                    episodeId = episode.id,
+                    floorCandidate = parsed.floorCandidate.ifBlank { look.floorCandidate },
+                    evidence = parsed.evidence.ifBlank { look.salientText },
+                    confidence = if (parsed.confidence > 0f) parsed.confidence else look.confidence,
+                    spaceType = parsed.spaceType.ifBlank { look.spaceType },
+                    guideDir = parsed.guideDir.ifBlank { look.guideDir },
+                    storeNames = parsed.storeNames.ifEmpty { look.storeNames },
+                    blocked = parsed.blocked || look.blocked,
+                )
+            } else {
+                SemanticLook.fromLook(look).copy(episodeId = episode.id)
+            }
+            lastObservation = observation
+            val pose = Pose3(
+                tNs = episode.settledAt,
+                position = Vec3(episode.poseX, episode.poseY, episode.poseZ),
+                orientation = Quat.fromYawPitchRoll(episode.yawDeg, 0f, 0f),
             )
-        } else {
-            SemanticLook.fromLook(look).copy(episodeId = episode.id)
+            OccupancyCue.apply(occupancy, pose, observation)
+            val node = topology.ingest(pose, observation, episode.grid, observation.floorCandidate)
+            Log.i(
+                TAG,
+                "topology node=${node?.id} kind=${observation.kind} nodes=${topology.topology.nodes.size} " +
+                    "edges=${topology.topology.edges.size} ep=${episode.id}",
+            )
+            return SpatialEvidence(
+                episodeId = episode.id,
+                poseX = episode.poseX,
+                poseY = episode.poseY,
+                poseZ = episode.poseZ,
+                yawDeg = episode.yawDeg,
+                tracking = episode.tracking,
+                topologyNodeId = node?.id.orEmpty(),
+                loopClosed = (node?.hits ?: 0) > 1,
+            )
         }
-        lastObservation = observation
-        val pose = Pose3(
-            tNs = episode.settledAt,
-            position = Vec3(episode.poseX, episode.poseY, episode.poseZ),
-            orientation = Quat.fromYawPitchRoll(episode.yawDeg, 0f, 0f),
-        )
-        OccupancyCue.apply(occupancy, pose, observation)
-        val node = topology.ingest(pose, observation, episode.grid, observation.floorCandidate)
-        Log.i(
-            TAG,
-            "topology node=${node?.id} kind=${observation.kind} nodes=${topology.topology.nodes.size} " +
-                "edges=${topology.topology.edges.size} ep=${episode.id}",
-        )
-        return SpatialEvidence(
-            episodeId = episode.id,
-            poseX = episode.poseX,
-            poseY = episode.poseY,
-            poseZ = episode.poseZ,
-            yawDeg = episode.yawDeg,
-            tracking = episode.tracking,
-            topologyNodeId = node?.id.orEmpty(),
-            loopClosed = (node?.hits ?: 0) > 1,
-        )
     }
 
     fun liveMap(): LiveTopology = topology.topology
@@ -124,49 +147,72 @@ class IndoorNavCoordinator {
         gpsArrive: Boolean,
         world: LandmarkWorld,
     ): NavHint? {
-        val ocr = landmarks.observe(extract, goal, gpsRemaining, gpsArrive, world)
-        if (landmarks.stage == LandmarkStage.OUTDOOR) return ocr?.let { decorateOutdoor(it) }
-        val explore = explorer.decide(
-            topology = topology.topology,
-            observation = lastObservation,
-            pose = lastPose,
-            quality = lastQuality,
-            goalName = goal.shortName.ifBlank { goal.storeName },
-            goalFloor = goal.floor,
-            currentFloor = landmarks.currentFloor.ifBlank { world.spokenFloor },
-            occupancy = occupancy,
-        )
-        val guide = IndoorHintBinder.bind(
-            ocr = ocr,
-            explore = explore,
-            pose = lastPose,
-            occupancy = occupancy,
-            quality = lastQuality,
-            storeName = goal.shortName,
-            remaining = gpsRemaining,
-            stage = landmarks.stage.name.lowercase(),
-        )
-        return toHint(guide, goal.shortName, gpsRemaining)
+        synchronized(lock) {
+            val ocr = landmarks.observe(extract, goal, gpsRemaining, gpsArrive, world)
+            if (landmarks.stage == LandmarkStage.OUTDOOR) return ocr?.let { decorateOutdoor(it) }
+            goalFloor = landmarks.targetFloor(goal)
+            val quality = exploreQuality()
+            val explore = explorer.decide(
+                topology = topology.topology,
+                observation = lastObservation,
+                pose = lastPose,
+                quality = quality,
+                goalName = goal.shortName.ifBlank { goal.storeName },
+                goalFloor = goalFloor,
+                currentFloor = landmarks.currentFloor.ifBlank { world.spokenFloor },
+                occupancy = occupancy,
+                hadGoodTrack = everGood,
+                lostMs = lostMs(),
+                stage = landmarks.stage.name.lowercase(),
+            )
+            val guide = IndoorHintBinder.bind(
+                ocr = ocr,
+                explore = explore,
+                pose = lastPose,
+                occupancy = occupancy,
+                quality = quality,
+                storeName = goal.shortName,
+                remaining = gpsRemaining,
+                stage = landmarks.stage.name.lowercase(),
+            )
+            return toHint(guide, goal.shortName, gpsRemaining)
+        }
     }
 
     fun bootstrapHint(goal: LandmarkGoal, remaining: Int): NavHint {
-        val ocr = landmarks.bootstrapHint(goal, remaining)
-        if (landmarks.stage == LandmarkStage.OUTDOOR) return decorateOutdoor(ocr)
-        val explore = explorer.decide(
-            topology.topology,
-            lastObservation,
-            lastPose,
-            lastQuality,
-            goal.shortName,
-            goal.floor,
-            landmarks.currentFloor,
-            occupancy,
-        )
-        val guide = IndoorHintBinder.bind(
-            ocr, explore, lastPose, occupancy, lastQuality,
-            goal.shortName, remaining, landmarks.stage.name.lowercase(),
-        )
-        return toHint(guide, goal.shortName, remaining)
+        synchronized(lock) {
+            val ocr = landmarks.bootstrapHint(goal, remaining)
+            if (landmarks.stage == LandmarkStage.OUTDOOR) return decorateOutdoor(ocr)
+            goalFloor = landmarks.targetFloor(goal)
+            val quality = exploreQuality()
+            val explore = explorer.decide(
+                topology.topology,
+                lastObservation,
+                lastPose,
+                quality,
+                goal.shortName,
+                goalFloor,
+                landmarks.currentFloor,
+                occupancy,
+                everGood,
+                lostMs(),
+                landmarks.stage.name.lowercase(),
+            )
+            val guide = IndoorHintBinder.bind(
+                ocr, explore, lastPose, occupancy, quality,
+                goal.shortName, remaining, landmarks.stage.name.lowercase(),
+            )
+            return toHint(guide, goal.shortName, remaining)
+        }
+    }
+
+    private fun lostMs(): Long {
+        if (lastQuality != TrackQuality.LOST || lostSinceElapsed == 0L) return 0L
+        return (SystemClock.elapsedRealtime() - lostSinceElapsed).coerceAtLeast(0L)
+    }
+
+    private fun exploreQuality(): TrackQuality {
+        return if (lastQuality == TrackQuality.LOST && !everGood) TrackQuality.WEAK else lastQuality
     }
 
     private fun decorateOutdoor(ocr: com.glass.dining.shared.nav.LandmarkHint): NavHint {
@@ -206,7 +252,14 @@ class IndoorNavCoordinator {
             waypoints = IndoorProtocol.encodeWaypoints(
                 guide.waypoints.map { floatArrayOf(it.x, it.y, it.z) },
             ),
-        )
+        ).also {
+            Log.i(
+                TAG,
+                "indoor hint stage=${guide.stage} space=${lastObservation.kind} " +
+                    "guide=${guide.waypoints.isNotEmpty()} n=${guide.waypoints.size} " +
+                    "heading=${guide.headingDeg} meters=${guide.meters} text=${guide.text}",
+            )
+        }
     }
 
     companion object {

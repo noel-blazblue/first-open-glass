@@ -2,6 +2,8 @@ package com.glass.dining.shared.indoor
 
 import kotlin.math.abs
 import kotlin.math.atan
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.tan
 
 /**
@@ -38,20 +40,32 @@ data class SensorCalibration(
     val hudHfovDeg: Float = 30f,
     val eyeHeightM: Float = 1.55f,
     val cameraTiltDeg: Float = 3f,
+    val hudLookDownDeg: Float = 8f,
     val gyroScale: Vec3 = Vec3(1f, 1f, 1f),
     val accelScale: Vec3 = Vec3(1f, 1f, 1f),
     val timeSync: TimeSyncStats = TimeSyncStats(),
 ) {
-    fun projectToHud(camX: Float, camY: Float, camZ: Float, viewW: Float, viewH: Float): Pair<Float, Float>? {
-        if (camY <= 0.08f) return null
-        val half = Math.toRadians(hudHfovDeg / 2.0)
-        val tanHalf = tan(half).toFloat()
-        val nx = (camX / camY) / tanHalf
-        val ny = (camZ / camY) / tanHalf
+    fun projectHud(camX: Float, camY: Float, camZ: Float, viewW: Float, viewH: Float): HudHit? {
+        val tilt = Math.toRadians((cameraTiltDeg + hudLookDownDeg).toDouble())
+        val cosT = cos(tilt).toFloat()
+        val sinT = sin(tilt).toFloat()
+        val y = camY * cosT - camZ * sinT
+        val z = camY * sinT + camZ * cosT
+        if (y <= 0.08f) return null
+        val tanHalf = tan(Math.toRadians(hudHfovDeg / 2.0)).toFloat()
+        val nx = (camX / y) / tanHalf
+        val ny = (z / y) / tanHalf
         if (abs(nx) > 1.35f || abs(ny) > 1.6f) return null
-        val x = viewW / 2f + nx * (viewW * 0.42f)
-        val y = viewH * 0.20f + ((1f - (ny + 1f) / 2f).coerceIn(0f, 1f)) * (viewH * 0.48f)
-        return x to y
+        return HudHit(
+            x = viewW * 0.5f * (1f + nx),
+            y = viewH * 0.5f * (1f - ny),
+            depth = y,
+        )
+    }
+
+    fun projectToHud(camX: Float, camY: Float, camZ: Float, viewW: Float, viewH: Float): Pair<Float, Float>? {
+        val hit = projectHud(camX, camY, camZ, viewW, viewH) ?: return null
+        return hit.x to hit.y
     }
 
     companion object {
@@ -72,6 +86,12 @@ data class SensorCalibration(
         }
     }
 }
+
+data class HudHit(
+    val x: Float,
+    val y: Float,
+    val depth: Float,
+)
 
 object TimeSync {
     fun push(prev: TimeSyncStats, cameraNs: Long, imuNs: Long, lastCamNs: Long, lastImuNs: Long): TimeSyncStats {

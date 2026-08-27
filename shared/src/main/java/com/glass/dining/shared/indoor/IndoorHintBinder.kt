@@ -34,22 +34,37 @@ object IndoorHintBinder {
             ocr != null && abs(ocr.headingDeg) > 4f -> ocr.headingDeg
             else -> explore.headingDeg
         }
+        val leaving = stage == "seek_exit"
         val mode = when {
             arrived -> "arrive"
-            explore.tracking == "tracking_lost" || explore.scanRequired -> ""
+            leaving -> explore.mode.ifBlank { ocr?.mode.orEmpty() }.ifBlank { "ground" }
             explore.mode.isNotBlank() -> explore.mode
-            else -> ocr?.mode.orEmpty()
+            else -> ocr?.mode.orEmpty().ifBlank { "ground" }
         }
-        val text = explore.text.ifBlank { ocr?.text.orEmpty() }.ifBlank { "跟着走" }
+        val text = when {
+            arrived -> explore.text.ifBlank { ocr?.text }.orEmpty().ifBlank { "跟着走" }
+            leaving -> ocr?.text?.ifBlank { explore.text }.orEmpty().ifBlank { "找出口出门" }
+            else -> explore.text.ifBlank { ocr?.text.orEmpty() }.ifBlank { "跟着走" }
+        }
         val turn = when {
             arrived -> "arrive"
             explore.turn.isNotBlank() -> explore.turn
             else -> ocr?.turn ?: "straight"
         }
-        val pts = WorldAnchor.chevrons(pose, heading, occupancy, quality)
+        val pts = if (!arrived && explore.hasGuide) {
+            WorldAnchor.chevrons(pose, heading, occupancy, quality)
+        } else {
+            emptyList()
+        }
+        val meters = when {
+            arrived -> 0
+            explore.meters > 0 -> explore.meters
+            (ocr?.meters ?: 0) > 0 -> ocr?.meters ?: 0
+            else -> 0
+        }
         return IndoorGuide(
             turn = turn,
-            meters = if (arrived) 0 else (explore.meters.takeIf { it > 0 } ?: ocr?.meters ?: 6),
+            meters = meters,
             text = text,
             mode = mode,
             headingDeg = heading,
@@ -70,7 +85,8 @@ object OccupancyCue {
             occupancy.markBlocked(pose)
         } else if (observation.kind == NodeKind.CORRIDOR ||
             observation.kind == NodeKind.JUNCTION ||
-            observation.kind == NodeKind.SIGNAGE
+            observation.kind == NodeKind.SIGNAGE ||
+            observation.kind == NodeKind.ENTRANCE
         ) {
             occupancy.markCorridor(pose)
         }

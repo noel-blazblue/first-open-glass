@@ -2,7 +2,7 @@ package com.glass.dining.shared.agent
 
 /**
  * TTS 被眼镜麦听回去时，识别结果会像正在播的那句。
- * 用文本重叠判断回声，不要用 RMS 在播报期间抢话。
+ * 用整句文本对齐判断回声，不要用两三个字的公共碎片，也不要用 RMS 抢话。
  */
 object EchoFilter {
     fun isEcho(heard: String, spoken: String): Boolean {
@@ -13,7 +13,7 @@ object EchoFilter {
         if (a.length >= 2 && b.contains(a)) return true
         if (b.length >= 2 && a.contains(b) && a.length <= b.length + 4) return true
         val overlap = longestOverlap(a, b)
-        return overlap >= 2 && overlap * 2 >= a.length
+        return overlap >= 4 && overlap * 10 >= a.length * 7
     }
 
     fun isUserPartial(heard: String, spoken: String): Boolean {
@@ -27,7 +27,7 @@ object EchoFilter {
             raw.forEach { ch ->
                 when {
                     ch.isWhitespace() -> Unit
-                    ch in "，。！？、；：,.!?;:\"'“”‘’…—-·" -> Unit
+                    ch in "，。！？、；：,.!?;:\"'“”‘’…—-·*" -> Unit
                     else -> append(ch.lowercaseChar())
                 }
             }
@@ -39,7 +39,6 @@ object EchoFilter {
     }
 
     private fun longestOverlap(a: String, b: String): Int {
-        var best = 0
         val maxLen = minOf(a.length, b.length)
         var len = maxLen
         while (len >= 2) {
@@ -51,8 +50,7 @@ object EchoFilter {
                 start += 1
             }
             len -= 1
-            if (len < best) break
         }
-        return best
+        return 0
     }
 }

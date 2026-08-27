@@ -23,8 +23,8 @@ object GlassAsr {
     private const val TAG = "GlassDiningPhone"
     const val SAMPLE_RATE = 16_000
     private const val MAX_UTTER_MS = 12_000L
-    private const val MIN_UTTER_MS = 1_500L
-    private const val ENDPOINT_SILENCE_MS = 1_800L
+    private const val MIN_UTTER_MS = 400L
+    private const val ENDPOINT_SILENCE_MS = 800L
     private const val PARTIAL_HOLD_MS = 500L
     private const val ASSET_ZIP = "asr/vosk-model-small-cn-0.22.zip"
 
@@ -88,7 +88,7 @@ object GlassAsr {
         val next = LinkedBlockingQueue<ByteArray>(48)
         queue = next
         if (NlsClient.ready) {
-            Thread({ listenLoopCloud(next) }, "glass-asr-nls").start()
+            Thread({ listenLoopNls(next) }, "glass-asr-nls").start()
             Log.i(TAG, "glass asr started engine=nls")
         } else {
             Thread({ listenLoop(next) }, "glass-asr").start()
@@ -104,7 +104,7 @@ object GlassAsr {
     }
 
     fun feed(pcm: ByteArray) {
-        if (!running.get() || muted) return
+        if (!running.get()) return
         if (pcm.isEmpty()) return
         val copy = pcm.copyOf()
         val q = queue ?: return
@@ -197,7 +197,49 @@ object GlassAsr {
         }
     }
 
-    private fun listenLoopCloud(incoming: LinkedBlockingQueue<ByteArray>) {
+    private fun listenLoopNls(incoming: LinkedBlockingQueue<ByteArray>) {
+        val transcriber = NlsTranscriber()
+        transcriber.onPartial = { text ->
+            Log.i(TAG, "nls partial=$text")
+            main.post { onPartial?.invoke(text) }
+            maybeBarge(text)
+        }
+        transcriber.onSentence = { text ->
+            Log.i(TAG, "glass asr nls sentence=$text")
+            emitUtterance(text)
+        }
+        val wsError = transcriber.start()
+        if (wsError != null) {
+            Log.w(TAG, "nls ws unavailable: $wsError")
+            listenLoopCloudRest(incoming)
+            return
+        }
+        try {
+            while (running.get()) {
+                val chunk = incoming.poll(80, TimeUnit.MILLISECONDS) ?: continue
+                if (!transcriber.send(chunk)) {
+                    Log.w(TAG, "nls ws send failed, fallback rest")
+                    transcriber.stop()
+                    listenLoopCloudRest(incoming)
+                    return
+                }
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "glass asr nls ws failed", error)
+            if (running.get()) {
+                listenLoopCloudRest(incoming)
+                return
+            }
+            main.post { onError?.invoke(error.message ?: "识别失败") }
+        } finally {
+            transcriber.stop()
+            if (!running.get()) {
+                Log.i(TAG, "glass asr nls ws stopped")
+            }
+        }
+    }
+
+    private fun listenLoopCloudRest(incoming: LinkedBlockingQueue<ByteArray>) {
         try {
             var noise = 80.0
             var inSpeech = false
@@ -205,6 +247,7 @@ object GlassAsr {
             var lastVoiceAt = 0L
             val pcm = ArrayList<ByteArray>()
             var pcmBytes = 0
+            Log.i(TAG, "glass asr engine=nls-rest silence=${ENDPOINT_SILENCE_MS}ms")
             while (running.get()) {
                 val chunk = incoming.poll(80, TimeUnit.MILLISECONDS) ?: continue
                 if (muted) {
@@ -231,7 +274,7 @@ object GlassAsr {
                     lastVoiceAt = now
                     pcm.clear()
                     pcmBytes = 0
-                    Log.i(TAG, "glass asr speech start rms=${level.toInt()} thr=${startThr.toInt()} engine=nls")
+                    Log.i(TAG, "glass asr speech start rms=${level.toInt()} thr=${startThr.toInt()} engine=nls-rest")
                 }
                 pcm.add(if (even == chunk.size) chunk else chunk.copyOf(even))
                 pcmBytes += even
@@ -260,7 +303,7 @@ object GlassAsr {
             main.post { onError?.invoke(error.message ?: "识别失败") }
         } finally {
             running.set(false)
-            Log.i(TAG, "glass asr nls stopped")
+            Log.i(TAG, "glass asr nls rest stopped")
         }
     }
 

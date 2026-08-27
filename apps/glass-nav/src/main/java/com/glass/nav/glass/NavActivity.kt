@@ -32,7 +32,10 @@ class NavActivity : android.app.Activity() {
             hud.pose = spatial.pose()
             hud.quality = spatial.quality()
             hud.invalidate()
-            val gap = if (hud.card.visual) 50L else 200L
+            val gap = when {
+                hud.card.visual || hud.card.isTalk -> 50L
+                else -> 200L
+            }
             main.postDelayed(this, gap)
         }
     }
@@ -195,7 +198,8 @@ class NavActivity : android.app.Activity() {
         if (!isFinishing) {
             stopCamera()
             if (!rtcActive) spatial.stop()
-            stopMic()
+            // P2P 入网会 pause/resume。对话还在听时停麦再开，会和旧 AudioRecord 叠成两路 PCM。
+            if (!wantMic) stopMic()
         }
         imu.stop()
         super.onPause()

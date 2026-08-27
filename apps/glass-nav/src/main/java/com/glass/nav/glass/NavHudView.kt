@@ -5,18 +5,19 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.View
+import com.glass.dining.shared.hud.ReimuHud
+import com.glass.dining.shared.hud.TalkPose
 import com.glass.dining.shared.indoor.OccupancyGrid
 import com.glass.dining.shared.indoor.Pose3
 import com.glass.dining.shared.indoor.TrackQuality
 import com.glass.dining.shared.nav.HudLines
-import com.glass.dining.shared.nav.IndoorProtocol
 import com.glass.dining.shared.nav.NavProtocol
 import com.glass.nav.glass.spatial.SensorProbe
 import com.glass.nav.glass.spatial.WorldAnchorRenderer
-import kotlin.math.atan
-import kotlin.math.sin
+import kotlin.math.min
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -66,7 +67,6 @@ class NavHudView @JvmOverloads constructor(
     }
     private val clockFmt = SimpleDateFormat("HH:mm", Locale.CHINA)
     private val path = Path()
-    private val chevronMeters = floatArrayOf(2.2f, 3.6f, 5.2f)
 
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(Color.BLACK)
@@ -74,7 +74,7 @@ class NavHudView @JvmOverloads constructor(
         val h = height.toFloat()
         val cx = w / 2f
         when {
-            card.isTalk -> drawTalk(canvas, cx, h)
+            card.isTalk -> drawTalk(canvas, cx, w, h)
             card.isNav -> drawNav(canvas, cx, w, h)
             else -> drawCard(canvas, cx, h)
         }
@@ -89,21 +89,27 @@ class NavHudView @JvmOverloads constructor(
         green.textAlign = Paint.Align.CENTER
     }
 
-    private fun drawTalk(canvas: Canvas, cx: Float, h: Float) {
+    private fun drawTalk(canvas: Canvas, cx: Float, w: Float, h: Float) {
+        val size = min(w, h) * 0.38f
+        val cy = h * 0.76f
         val lines = NavProtocol.wrapSpeech(card.speech)
-        val gap = 28f
-        val orbY = h * 0.78f
-        val textBottom = orbY - 28f
+        val gap = 26f
+        val textBottom = cy - size * 0.52f
         green.textSize = 20f
         green.textAlign = Paint.Align.CENTER
         lines.asReversed().forEachIndexed { index, line ->
             canvas.drawText(line, cx, textBottom - index * gap, green)
         }
-        val r = 18f
-        canvas.drawCircle(cx, orbY, r, stroke)
+        ReimuHud.draw(
+            canvas,
+            resources,
+            cx,
+            cy,
+            size,
+            TalkPose.of(card.pose, card.speech),
+            SystemClock.uptimeMillis() / 1000f,
+        )
         green.style = Paint.Style.FILL
-        canvas.drawCircle(cx - 6f, orbY - 2f, 2.2f, green)
-        canvas.drawCircle(cx + 6f, orbY - 2f, 2.2f, green)
     }
 
     private fun drawNav(canvas: Canvas, cx: Float, w: Float, h: Float) {
@@ -115,14 +121,7 @@ class NavHudView @JvmOverloads constructor(
             card.mode == "arrive" || card.turn == "arrive" -> {
                 drawTurn(canvas, cx, h * 0.42f, "arrive", w * 0.16f)
             }
-            card.mode == "elevator" ||
-                card.mode == "stairs" ||
-                card.mode == "corridor" ||
-                card.mode == "exit" -> {
-                drawPointer(canvas, w, h)
-            }
-            card.visual -> drawGround(canvas, w, h)
-            else -> drawTurn(canvas, cx, h * 0.42f, card.turn, w * 0.16f)
+            else -> drawGround(canvas, w, h)
         }
         val meters = if (card.turn == "arrive") "到了" else if (card.meters > 0) "${card.meters}米" else card.meta
         green.textSize = 28f
@@ -139,7 +138,6 @@ class NavHudView @JvmOverloads constructor(
     }
 
     private fun drawGround(canvas: Canvas, w: Float, h: Float) {
-        if (hideArrows()) return
         val screens = renderer.screens(
             pose = pose,
             quality = quality,
@@ -150,80 +148,25 @@ class NavHudView @JvmOverloads constructor(
             viewH = h,
             calib = SensorProbe.calibration,
         )
-        if (screens.isNotEmpty()) {
-            screens.forEachIndexed { index, point ->
-                val meters = 2.2f + index * 1.4f
-                val scale = (1.15f / meters).coerceIn(0.16f, 0.48f) * w
-                drawChevron(canvas, point.first, point.second, scale, card.headingDeg)
-            }
-            return
-        }
-        if (card.tracking.isNotBlank()) return
-        chevronMeters.forEach { distance ->
-            val point = projectGround(distance, card.headingDeg, pitchDeg, w, h) ?: return@forEach
-            val scale = (1.15f / distance).coerceIn(0.16f, 0.48f) * w
-            drawChevron(canvas, point.first, point.second, scale, card.headingDeg)
+        screens.forEach { chevron ->
+            drawChevron(canvas, chevron.x, chevron.y, chevron.size, chevron.angleDeg, chevron.alpha)
         }
     }
 
-    private fun hideArrows(): Boolean {
-        return quality == TrackQuality.LOST || card.tracking == IndoorProtocol.TRACK_LOST
-    }
-
-    private fun drawPointer(canvas: Canvas, w: Float, h: Float) {
-        val hudHalf = 15f
-        val x = (w / 2f + (card.headingDeg / hudHalf) * (w * 0.42f)).coerceIn(w * 0.12f, w * 0.88f)
-        val y = (h * 0.46f - (card.elevationDeg / hudHalf) * (h * 0.18f)).coerceIn(h * 0.22f, h * 0.68f)
-        val size = w * 0.11f
-        path.reset()
-        path.moveTo(x, y - size)
-        path.lineTo(x - size * 0.62f, y + size * 0.38f)
-        path.lineTo(x + size * 0.62f, y + size * 0.38f)
-        path.close()
-        canvas.drawPath(path, arrow)
-        stroke.strokeWidth = 2.2f
-        canvas.drawCircle(x, y, size * 1.35f, stroke)
-        green.textAlign = Paint.Align.CENTER
-        green.textSize = 15f
-        val label = when (card.mode) {
-            "elevator" -> "电梯"
-            "stairs" -> if (card.elevationDeg < 0f) "下楼梯" else "上楼梯"
-            "exit" -> "出口"
-            else -> "通道"
-        }
-        canvas.drawText(label, x, y + size * 2.1f, green)
-    }
-
-    private fun drawChevron(canvas: Canvas, x: Float, y: Float, size: Float, heading: Float) {
-        val rad = Math.toRadians(heading.toDouble())
-        val dx = (sin(rad) * size * 0.08f).toFloat()
+    private fun drawChevron(canvas: Canvas, x: Float, y: Float, size: Float, angleDeg: Float, alpha: Float) {
+        val a = (alpha * 255f).toInt().coerceIn(40, 255)
+        chevronPaint.alpha = a
         val half = size * 0.42f
         val depth = size * 0.28f
+        canvas.save()
+        canvas.rotate(angleDeg, x, y)
         path.reset()
-        path.moveTo(x - half + dx, y + depth)
-        path.lineTo(x + dx, y - depth)
-        path.lineTo(x + half + dx, y + depth)
+        path.moveTo(x - half, y + depth)
+        path.lineTo(x, y - depth)
+        path.lineTo(x + half, y + depth)
         canvas.drawPath(path, chevronPaint)
-    }
-
-    private fun projectGround(
-        distanceM: Float,
-        headingDeg: Float,
-        pitchDeg: Float,
-        w: Float,
-        h: Float,
-    ): Pair<Float, Float>? {
-        if (kotlin.math.abs(headingDeg) > 22f) return null
-        val lookDown = (-pitchDeg).coerceIn(-8f, 50f)
-        val groundEl = Math.toDegrees(atan((CAM_HEIGHT_M / distanceM).toDouble())).toFloat()
-        val el = (groundEl - lookDown).coerceIn(4f, 36f)
-        val hudHalf = 15f
-        val x = w / 2f + (headingDeg / hudHalf) * (w * 0.42f)
-        val bandTop = h * 0.20f
-        val bandBot = h * 0.68f
-        val t = ((el - 6f) / 24f).coerceIn(0f, 1f)
-        val y = bandTop + t * (bandBot - bandTop)
-        return x to y
+        canvas.restore()
+        chevronPaint.alpha = 255
     }
 
     private fun drawTurn(canvas: Canvas, cx: Float, cy: Float, turn: String, size: Float) {
@@ -265,9 +208,5 @@ class NavHudView @JvmOverloads constructor(
         if (card.meta.isNotBlank()) canvas.drawText(card.meta, cx, top + gap, green)
         if (card.wait.isNotBlank()) canvas.drawText(card.wait, cx, top + gap * 2, green)
         if (card.extra.isNotBlank()) canvas.drawText(card.extra, cx, top + gap * 3, green)
-    }
-
-    companion object {
-        private const val CAM_HEIGHT_M = 1.55f
     }
 }

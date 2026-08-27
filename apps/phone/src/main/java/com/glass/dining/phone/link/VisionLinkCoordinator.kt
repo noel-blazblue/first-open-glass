@@ -90,6 +90,10 @@ class VisionLinkCoordinator(
         apply(machine.onGlassReady())
     }
 
+    fun onGlassLost() {
+        apply(machine.onGlassLost())
+    }
+
     fun onRtc(cmd: String, json: String?) {
         when (cmd) {
             NavProtocol.CMD_P2P_READY -> {
@@ -129,7 +133,7 @@ class VisionLinkCoordinator(
     fun refreshLayers() {
         machine.updateLayers(
             cxr = cxrLine(),
-            glassApp = if (CxrLinkHost.hudOpened) "已就绪" else machine.snapshot.glassApp,
+            glassApp = if (CxrLinkHost.glassReady) "已就绪" else machine.snapshot.glassApp,
             mic = micLine(),
         )
         publish()
@@ -166,7 +170,7 @@ class VisionLinkCoordinator(
             LinkEffect.None -> Unit
             is LinkEffect.StartGlass -> {
                 Log.i(TAG, "phase GlassStarting attempt=${effect.attemptId}")
-                CxrLinkHost.queryAndStart()
+                CxrLinkHost.ensureGlassApp("link")
             }
             is LinkEffect.KeepWifi -> CxrLinkHost.sendRtc(NavProtocol.CMD_WIFI_KEEP)
             is LinkEffect.CreateGroup -> startGroup(effect.attemptId)

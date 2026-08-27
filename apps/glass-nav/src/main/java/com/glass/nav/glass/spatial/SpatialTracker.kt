@@ -12,7 +12,7 @@ class SpatialTracker {
     private var filter = VisualInertialFilter(SensorProbe.calibration)
 
     fun reset() {
-        filter = VisualInertialFilter(SensorProbe.calibration)
+        filter.reset()
     }
 
     fun onImu(sample: com.glass.dining.shared.indoor.ImuSample) {

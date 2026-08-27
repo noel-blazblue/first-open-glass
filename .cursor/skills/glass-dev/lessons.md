@@ -1,3 +1,59 @@
+## 2026-08-28 — 环境已捕捉门口，不等于导航会立刻画箭头
+
+- 场景：log 已有 `topology kind=ENTRANCE` 和 `space=entrance`，镜片仍无出口箭头。
+- 误判：VLM 没看见门；规划器不会跟入口；该写死朝前铺路。
+- 根因：环境提交和导航 HUD 是两条线。`onSemantic` 只写观察/拓扑，`onCommitted` 原先不重跑室内 hint。后续 HUD 多来自 GPS 只改 remaining，旧 hint 没有 waypoints。VLM 线程写观察、抽帧线程读，字段也没有 happens-before。
+- 以后先做：门口提交后立刻 `bootstrapHint` 推带 waypoints 的 hint。log 看 `indoor refresh from look` 和 `indoor hint ... guide=true`。
+- 不要做：用「捕捉到门口」当箭头已发出；无 waypoints 就朝前编假路。
+
+## 2026-08-28 — 室内箭头要接 VLM 出口，不要写死 6 米
+
+- 场景：对着门没有箭头，HUD 却固定显示 6 米。
+- 误判：室内导航做不了；或者没箭头就该在屏幕下沿画假路。
+- 根因：规划器不消费 `entrance/exits`；手机 XYZ 路点配眼镜 VIO 投丢；`ExploreHint`/`landmarkGround` 默认 6 米；无导视仍朝前铺 chevron。
+- 以后先做：VLM 填了出口才 `hasGuide`，眼镜只用本地 pose 投影。未知不报米数。log 看 `indoor stage=SEEK_EXIT` 与环境 `exits`/`spaceType=entrance`。
+- 不要做：写死 6 米；无导视编朝前的路；用手机 waypoint 坐标在眼镜上投。
+
+## 2026-08-28 — 镜片「定位丢失」和漂浮三角不是贴地导航
+
+- 场景：室内找出口时镜片仍出「定位丢失」，箭头在画面中央，不贴地、不跟转头。
+- 误判：VIO 真丢了所以该藏箭头；2m 处画 chevron 就会贴在地上。
+- 根因：GOOD 之后 IMU 间隙/速度尖峰把质量打成 LOST，`ExplorationPlanner` 用「定位丢失」盖掉找出口。HUD 在 `tracking_lost` 时画屏幕三角。地面点在 2.2m 仰角约 35°，30° 光机看不见，`projectToHud` 丢掉。
+- 以后先做：短丢失保持上一帧 chevron 和任务文案。路点 6/9/12m、地面 z=眼高下、HUD 针孔加下俯。本地 pose 世界锁定投影。log 看 `indoor stage=SEEK_EXIT`，镜片应是「找出口出门」加下沿 V 形。
+- 不要做：把短暂 LOST 写成「定位丢失」；用屏幕中央三角当 AR 指引；在 2m 脚边画箭头指望光机能看见。
+
+## 2026-08-28 — 办公室说去海底捞，室内任务是出门不是找目的楼层
+
+- 场景：对眼镜说「导航去海底捞」，镜片「定位丢失 / 请环视」，没有室内箭头，也不走高德。
+- 误判：GPS 坏了；或者办公室 GPS 30m 该直接走高德路网。
+- 根因：人确实在室内，该开 VIO。高德 POI `floor=3` 让 `destFloorOf` 在出发楼里 `LOCATE_FLOOR`。VIO 冷启动 LOST 又把箭头藏掉。
+- 以后先做：室内/室外按人在哪。出发地室内忽略目的楼层，走找出口；出门 `maybeLockOutdoor` 再步行；近店才用 POI 楼层。WEAK 冷启动不说定位丢失。log 看 `indoor start ... target=1 remain=` / `indoor stage=SEEK_EXIT`。
+- 不要做：用 acc>25m 取消室内；出发楼里找万象汇 3 楼；一进室内就 `tracking_lost` 藏箭头。
+
+## 2026-08-28 — 打开到餐必须把 CustomApp 拉回前台
+
+- 场景：停在「眼镜 Wi-Fi 正在打开」，镜片黑屏。CustomApp 进程没了，手机还在 PeerJoining。
+- 误判：Wi-Fi 卡在 ENABLING；没有 CustomApp 就不能用，只能用户自己再点一次。
+- 根因：`onGlassAppResume(false)` 不清 `glassReady`，开流跳过 `appStart`。CXR 早已连上时 `MainActivity.onResume` 也不 ensure。
+- 以后先做：`GlassForegroundPolicy` 管前台/宽限/去重。打开到餐 `ensure("activity")`。页丢失过 2.5s 再 `onGlassLost` + `appStart`。看 log `ensure reason=` / `appStart` / `cmd=ready`。
+- 不要做：`resume=false` 立刻再 start（Direct 会 pause）；ADB `am start` 当产品路径；`stop_glass` 后还自动拉起。
+
+## 2026-08-28 — TTS 期间「去第一家」被回声过滤误杀
+
+- 场景：AI 问去哪一家，用户说「去第一家」，TTS 不停，Agent 不接。
+- 误判：麦 mute 了；或刚改的 onPause 不停麦弄坏了插话。
+- 根因：NLS REST 无 partial。`EchoFilter` 两个字「一家」就算 overlap，和播报「你想去哪一家」撞上。`echo ignored 去第一家。`
+- 以后先做：回声要整句子串或 ≥4 字且覆盖听写 70%。主路径 NLS WebSocket 中间结果 + `max_sentence_silence=800`。partial 不像播报就 `barge`。镜片 `listening(heard)`。log 看 `nls ws started` / `nls partial=` / `barge partial=`，不应再对「去第一家」打 `echo ignored`。
+- 不要做：用 RMS 抢话；为「第一家」写死映射；REST 再等 1.8s 静音才送识别。
+
+## 2026-08-28 — 开 Direct 时眼镜麦会叠成两路
+
+- 场景：点对话后再开视频，NLS 把短句听成别的词；log 里 `mic started` 出现两次，PCM 大约 2 倍实时。
+- 误判：ASR 模型差、某个店名要写死纠错。
+- 根因：`joinP2p` 换网会让 `NavActivity` pause/resume。旧逻辑 `onPause` 无条件 `stopMic`，`onResume` 见 `wantMic` 再开。旧 `AudioRecord.read` 还没退出，新的已经在采，两路 PCM 叠进 ASR。
+- 以后先做：麦跟 `mic.on`/`mic.off`（`wantMic`），不要跟页面可见性。还在听时 `onPause` 不停麦；`GlassMic` 用 generation，stop 后旧线程不能被新的 `running=true` 救活。装包看 `mic started` 全程只有一次，resume 应是 `mic 眼镜麦已开`。签名不一致时先 `adb uninstall com.glass.nav.glass` 再 `installGlassAdb`。
+- 不要做：为听错的店名写谐音表；用 `install -r` 硬覆盖不同签名的旧包。
+
 ## 2026-08-27 — 说话时姿态改走 WebRTC DataChannel，CXR 只保 PCM
 
 - 场景：转头看标识时环境探针拿不到 yaw；麦开着又不能在蓝牙上发 pose。

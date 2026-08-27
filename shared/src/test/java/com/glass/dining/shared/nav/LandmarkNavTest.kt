@@ -175,7 +175,46 @@ class LandmarkNavTest {
             world = indoorWorld(),
         )
         assertNotNull(hint)
-        assertEquals(LandmarkStage.SEEK_VERTICAL, planner.stage)
+        assertEquals(LandmarkStage.SEEK_EXIT, planner.stage)
+        assertEquals("找出口出门", hint!!.text)
+    }
+
+    @Test
+    fun farIndoorIgnoresDestFloorSeeksExit() {
+        val planner = LandmarkPlanner()
+        planner.start(goal(floor = "3"), gpsUsable = false, remaining = 400)
+        assertEquals(LandmarkStage.SEEK_EXIT, planner.stage)
+        assertEquals("1", planner.targetFloor(goal(floor = "3")))
+        val hint = planner.bootstrapHint(goal(floor = "3"), 400)
+        assertEquals("找出口出门", hint.text)
+    }
+
+    @Test
+    fun farIndoorExitThenGpsLocksOutdoor() {
+        val planner = LandmarkPlanner()
+        planner.start(goal(floor = "3"), gpsUsable = false, remaining = 400)
+        assertEquals(LandmarkStage.SEEK_EXIT, planner.stage)
+        val street = extract(OcrBlock("路口", 40, 40, 100, 80))
+        planner.observe(street, goal(floor = "3"), 400, false, indoorWorld())
+        val hint = planner.observe(
+            street,
+            goal(floor = "3"),
+            400,
+            false,
+            LandmarkWorld(gpsUsable = true, gpsAccuracyM = 12f),
+        )
+        assertEquals(LandmarkStage.OUTDOOR, planner.stage)
+        assertNull(hint)
+    }
+
+    @Test
+    fun nearDestUsesPoiFloor() {
+        val planner = LandmarkPlanner()
+        planner.start(goal(floor = "3"), gpsUsable = true, remaining = 400)
+        assertEquals(LandmarkStage.OUTDOOR, planner.stage)
+        planner.observe(extract(), goal(floor = "3"), gpsRemaining = 60, gpsArrive = false)
+        assertEquals(LandmarkStage.LOCATE_FLOOR, planner.stage)
+        assertEquals("3", planner.targetFloor(goal(floor = "3")))
     }
 
     @Test

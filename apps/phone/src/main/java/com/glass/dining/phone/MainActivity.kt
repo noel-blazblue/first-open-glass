@@ -78,10 +78,14 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         PhoneGps.start(this)
+        if (!intent.getBooleanExtra("stop_glass", false)) {
+            viewModel.onPhoneForeground()
+        }
         viewModel.reloadCatalog()
     }
 
     override fun onPause() {
+        viewModel.onPhoneBackground()
         PhoneGps.stop()
         super.onPause()
     }

@@ -161,10 +161,17 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         GlassAsr.onEndpoint = { onAsrEndpoint() }
         GlassAsr.onUtterance = { text -> onHeard(text) }
         GlassAsr.onError = { message -> setStatus(message) }
-        GlassAsr.onPartial = { if (it.isBlank()) showListeningCard() }
+        GlassAsr.onPartial = { text ->
+            if (text.isBlank()) {
+                showListeningCard()
+            } else {
+                showHeardCard(text)
+            }
+        }
         PhoneTts.onIdle = { onTalkIdle() }
         CxrLinkHost.onHudOpened = { onHudOpened() }
         CxrLinkHost.onGlassReady = { link.onGlassReady() }
+        CxrLinkHost.onGlassLost = { link.onGlassLost() }
         CxrLinkHost.onFrame = { CxrLinkHost.ackFrame() }
         CxrLinkHost.onRtc = { cmd, json -> link.onRtc(cmd, json) }
         CxrLinkHost.onPose = { pose ->
@@ -176,7 +183,12 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             indoor.onPose(pose)
         }
         EnvironmentWatcher.onSemantic = { episode, look, raw -> indoor.onSemantic(episode, look, raw) }
-        EnvironmentWatcher.onCommitted = { main.post { publishAgentContext() } }
+        EnvironmentWatcher.onCommitted = {
+            main.post {
+                publishAgentContext()
+                refreshIndoorFromLook()
+            }
+        }
         PhoneRtc.onSignal = { cmd, json -> CxrLinkHost.sendRtc(cmd, json) }
         PhoneRtc.onStatus = { line ->
             link.onRtcStatus(line)
@@ -225,6 +237,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         PhoneTts.onIdle = null
         CxrLinkHost.onHudOpened = null
         CxrLinkHost.onGlassReady = null
+        CxrLinkHost.onGlassLost = null
         CxrLinkHost.onFrame = null
         CxrLinkHost.onRtc = null
         CxrLinkHost.onPose = null
@@ -236,8 +249,18 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         PhoneP2p.onStatus = null
         StreamVision.onSample = null
         link.stop()
+        CxrLinkHost.phoneWantsGlass = false
         CxrLinkHost.stopGlassApp()
         super.onCleared()
+    }
+
+    fun onPhoneForeground() {
+        CxrLinkHost.phoneWantsGlass = true
+        CxrLinkHost.ensureGlassApp("activity")
+    }
+
+    fun onPhoneBackground() {
+        CxrLinkHost.phoneWantsGlass = false
     }
 
     fun setStatus(text: String) {
@@ -258,6 +281,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             setStatus("还没连上眼镜，无法开视频流")
             return
         }
+        CxrLinkHost.ensureGlassApp("vision")
         link.begin()
     }
 
@@ -270,8 +294,18 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         if (!CxrLinkHost.linkReady()) return
         main.post {
             if (link.open || PhoneRtc.hasFreshFrame()) return@post
-            link.begin()
+            startVisionLink()
         }
+    }
+
+    private fun refreshIndoorFromLook() {
+        if (session.activeSkill != ActiveSkill.NAV) return
+        if (indoor.landmarks.stage == LandmarkStage.OUTDOOR) return
+        val store = session.currentStore ?: return
+        val remaining = _ui.value.navHint?.remaining ?: 0
+        val hint = indoor.bootstrapHint(LandmarkPlanner.goalOf(store), remaining)
+        Log.i(TAG, "indoor refresh from look space=${indoor.lastObservation.kind} text=${hint.text} wp=${hint.waypoints.isNotBlank()}")
+        publishNavHint(hint)
     }
 
     private fun maybeLandmarkNav(frame: StreamFrame) {
@@ -298,14 +332,21 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         )
         if (visual == null) {
             if (indoor.landmarks.stage == LandmarkStage.OUTDOOR) {
+                if (lastLandmarkStage.isNotBlank() && lastLandmarkStage != LandmarkStage.OUTDOOR.name) {
+                    stopVisionLink()
+                }
+                lastLandmarkStage = LandmarkStage.OUTDOOR.name
                 viewModelScope.launch(Dispatchers.IO) { ensureOutdoorRoute() }
             }
             return
         }
         val hint = visual
+        val stage = indoor.landmarks.stage.name
+        if (lastLandmarkStage == LandmarkStage.OUTDOOR.name || lastLandmarkStage.isBlank()) {
+            kickOpenVisionStream()
+        }
         main.post {
             publishNavHint(hint)
-            val stage = indoor.landmarks.stage.name
             if (stage != lastLandmarkStage) {
                 lastLandmarkStage = stage
                 Log.i(TAG, "indoor stage=$stage mode=${hint.mode} nodes=${indoor.liveMap().nodes.size} text=${hint.text}")
@@ -502,6 +543,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             setStatus("眼镜未连上，无法接收眼镜语音。请先用乐奇连上这副眼镜。")
             return
         }
+        CxrLinkHost.ensureGlassApp("talk")
         _ui.update { it.copy(talking = true, status = "正在打开对话…", asrPartial = "") }
         viewModelScope.launch {
             val asrError = withContext(Dispatchers.IO) { GlassAsr.start(getApplication()) }
@@ -999,7 +1041,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             speakNewSentences(partial, done)
             return
         }
-        val card = HudCard.talk(partial)
+        val card = HudCard.talk(partial, pose = HudCard.POSE_SPEAK)
         _ui.update {
             it.copy(
                 card = card,
@@ -1028,6 +1070,13 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         if (!_ui.value.talking || talk.asking || _ui.value.recognizing) return
         val card = HudCard.listening(currentMatch(), navCard = navCard())
         _ui.update { it.copy(card = card) }
+        CxrLinkHost.showCard(card)
+    }
+
+    private fun showHeardCard(heard: String) {
+        if (!_ui.value.talking || _ui.value.recognizing) return
+        val card = HudCard.listening(currentMatch(), heard = heard, navCard = navCard())
+        _ui.update { it.copy(card = card, asrPartial = heard) }
         CxrLinkHost.showCard(card)
     }
 
@@ -1121,7 +1170,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         if (outdoorFix && PhoneAi.amapKey.isBlank()) {
             return "没配高德步行密钥，在 ai.env 写 AMAP_WEB_KEY"
         }
-        val route = if (outdoorFix && origin != null && dest != null) {
+        val route = if (origin != null && dest != null && PhoneAi.amapKey.isNotBlank()) {
             AmapWalking.fetch(origin, dest, store0.shortName, PhoneAi.amapKey)
         } else {
             null
@@ -1130,7 +1179,9 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         announcedArrive = false
         lastRerouteAt = 0
         lastLandmarkStage = ""
-        indoor.start(goal, gpsUsable = outdoorFix, spokenFloor = spoken)
+        val remaining = route?.distance
+            ?: if (outdoorFix) 0 else if (dest != null) 10_000 else 0
+        indoor.start(goal, gpsUsable = outdoorFix, spokenFloor = spoken, remaining = remaining)
         if (spoken.isNotBlank()) spokenFloor = LandmarkSignage.normalizeFloor(spoken).ifBlank { spokenFloor }
         WalkGuide.clear()
         if (route != null) WalkGuide.set(route)
@@ -1142,7 +1193,6 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 Log.w(TAG, "nav location ${error.message}")
             }
         }
-        val remaining = route?.distance ?: 0
         val hint = if (outdoorFix) {
             val walked = origin?.let { WalkGuide.update(it) }
             walked ?: NavHint(
@@ -1167,7 +1217,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             CxrLinkHost.startNav(hint)
             CxrLinkHost.showCard(card)
         }
-        kickOpenVisionStream()
+        if (!outdoorFix) kickOpenVisionStream()
         return null
     }
 
@@ -1213,13 +1263,10 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 indoor.landmarks.stage != LandmarkStage.ARRIVED
             if (visualActive) {
                 val current = _ui.value.navHint
-                if (current != null && current.visual) {
+                if (current != null) {
                     main.post { publishNavHint(current.copy(remaining = hint.remaining)) }
-                    return@launch
                 }
-                if (hint.turn == "arrive") {
-                    return@launch
-                }
+                return@launch
             }
             main.post { publishNavHint(hint) }
         }
@@ -1373,7 +1420,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             this@DiningViewModel.publishMatch(result, source)
         }
         override fun publishTalk(speak: String, tts: Boolean) {
-            val card = HudCard.talk(speak)
+            val card = HudCard.talk(speak, pose = HudCard.POSE_SPEAK)
             main.post {
                 _ui.update { it.copy(card = card, status = speak) }
                 CxrLinkHost.showCard(card)

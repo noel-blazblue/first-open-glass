@@ -1,7 +1,7 @@
 package com.glass.dining.shared.indoor
 
 /**
- * 用当前 VIO 位姿把世界点投到 HUD。跟踪丢失时返回空，不画假箭头。
+ * 用当前 VIO 位姿把世界点投到 HUD。短跟踪丢失仍给出地面点，由绘制端沿用上一帧。
  */
 object WorldAnchor {
     fun project(
@@ -23,23 +23,22 @@ object WorldAnchor {
         viewH: Float,
         quality: TrackQuality,
     ): List<Pair<Float, Float>> {
-        if (quality == TrackQuality.LOST) return emptyList()
-        return points.mapNotNull { project(it, pose, calib, viewW, viewH) }
+        return GroundGuide.project(points, pose, calib, viewW, viewH, quality == TrackQuality.LOST)
+            .map { it.x to it.y }
     }
 
     fun chevrons(
         pose: Pose3,
         headingDeg: Float,
         occupancy: OccupancyGrid,
-        quality: TrackQuality,
+        @Suppress("UNUSED_PARAMETER") quality: TrackQuality,
     ): List<Vec3> {
-        if (quality == TrackQuality.LOST) return emptyList()
         if (occupancy.read(pose.position).kind == CellKind.UNKNOWN) {
             occupancy.recenter(pose)
         }
         val pts = LocalPath.conservative(occupancy, pose, headingDeg)
-        return if (pts.isNotEmpty()) pts else LocalPath.CHEVRON_M.map { meters ->
-            pointAhead(pose, meters, headingDeg)
+        return pts.ifEmpty {
+            LocalPath.CHEVRON_M.map { meters -> pointAhead(pose, meters, headingDeg) }
         }
     }
 }

@@ -62,6 +62,7 @@ class LandmarkPlanner {
     private var stickKind: String = ""
     private var stickHits: Int = 0
     private var indoorLostGps: Boolean = false
+    private var atVenue: Boolean = false
 
     fun reset() {
         stage = LandmarkStage.OUTDOOR
@@ -70,11 +71,13 @@ class LandmarkPlanner {
         stickKind = ""
         stickHits = 0
         indoorLostGps = false
+        atVenue = false
     }
 
-    fun start(goal: LandmarkGoal, gpsUsable: Boolean, spokenFloor: String = "") {
+    fun start(goal: LandmarkGoal, gpsUsable: Boolean, spokenFloor: String = "", remaining: Int = 0) {
         reset()
         applySpoken(spokenFloor)
+        atVenue = remaining <= VISUAL_ENTER_M
         if (gpsUsable) {
             stage = LandmarkStage.OUTDOOR
         } else {
@@ -85,9 +88,12 @@ class LandmarkPlanner {
 
     fun enterIndoor(goal: LandmarkGoal, spokenFloor: String = "") {
         indoorLostGps = false
+        atVenue = true
         if (currentFloor.isBlank()) applySpoken(spokenFloor)
         enterFromScene(goal)
     }
+
+    fun targetFloor(goal: LandmarkGoal): String = destFloorOf(goal)
 
     fun bootstrapHint(goal: LandmarkGoal, remaining: Int): LandmarkHint {
         val text = when (stage) {
@@ -152,6 +158,7 @@ class LandmarkPlanner {
         retargetVertical(goal)
         stage = when {
             currentFloor.isNotBlank() -> afterKnownFloor(goal)
+            !atVenue && indoorLostGps -> LandmarkStage.SEEK_EXIT
             goal.floor.isNotBlank() -> LandmarkStage.LOCATE_FLOOR
             indoorLostGps -> LandmarkStage.LOCATE_FLOOR
             else -> LandmarkStage.SEEK_STORE
@@ -163,7 +170,11 @@ class LandmarkPlanner {
         val dest = destFloorOf(goal)
         if (dest.isBlank()) return LandmarkStage.SEEK_STORE
         return when (LandmarkSignage.relate(currentFloor, dest)) {
-            FloorRel.SAME -> if (goal.floor.isBlank()) LandmarkStage.SEEK_EXIT else LandmarkStage.SEEK_STORE
+            FloorRel.SAME -> if (!atVenue || goal.floor.isBlank()) {
+                LandmarkStage.SEEK_EXIT
+            } else {
+                LandmarkStage.SEEK_STORE
+            }
             FloorRel.UNKNOWN -> LandmarkStage.LOCATE_FLOOR
             FloorRel.UP, FloorRel.DOWN -> LandmarkStage.SEEK_VERTICAL
         }
@@ -196,7 +207,7 @@ class LandmarkPlanner {
     private fun seekVertical(extract: LocalExtract, goal: LandmarkGoal, remaining: Int): LandmarkHint {
         maybeAdvanceByFloor(extract, goal, remaining)?.let { return it }
         if (onDestFloor(goal)) {
-            stage = if (goal.floor.isBlank()) LandmarkStage.SEEK_EXIT else LandmarkStage.SEEK_STORE
+            stage = if (!atVenue || goal.floor.isBlank()) LandmarkStage.SEEK_EXIT else LandmarkStage.SEEK_STORE
             return observeCurrent(extract, goal, remaining)
         }
         val hit = LandmarkSignage.bestVertical(extract)
@@ -220,7 +231,7 @@ class LandmarkPlanner {
     private fun confirmFloor(extract: LocalExtract, goal: LandmarkGoal, remaining: Int): LandmarkHint {
         maybeAdvanceByFloor(extract, goal, remaining)?.let { return it }
         if (onDestFloor(goal)) {
-            stage = if (goal.floor.isBlank()) LandmarkStage.SEEK_EXIT else LandmarkStage.SEEK_STORE
+            stage = if (!atVenue || goal.floor.isBlank()) LandmarkStage.SEEK_EXIT else LandmarkStage.SEEK_STORE
             return observeCurrent(extract, goal, remaining)
         }
         val dest = destFloorOf(goal)
@@ -311,6 +322,7 @@ class LandmarkPlanner {
         if (outdoorFix || streetCue) {
             stage = LandmarkStage.OUTDOOR
             indoorLostGps = false
+            atVenue = false
             stickKind = ""
             stickHits = 0
         }
@@ -346,9 +358,9 @@ class LandmarkPlanner {
 
     private fun destFloorOf(goal: LandmarkGoal): String {
         return when {
-            goal.floor.isNotBlank() -> goal.floor
+            atVenue && goal.floor.isNotBlank() -> goal.floor
             indoorLostGps -> "1"
-            else -> ""
+            else -> goal.floor
         }
     }
 
@@ -402,17 +414,7 @@ class LandmarkPlanner {
     }
 
     private fun ground(goal: LandmarkGoal, remaining: Int, heading: Float, text: String): LandmarkHint {
-        return LandmarkHint(
-            turn = headingTurn(heading),
-            meters = 6,
-            text = text,
-            storeName = goal.shortName,
-            remaining = remaining,
-            mode = MODE_GROUND,
-            headingDeg = heading,
-            elevationDeg = 0f,
-            stage = stage.name.lowercase(),
-        )
+        return landmarkGround(goal, remaining, heading, text, stage)
     }
 
     private fun pointing(
@@ -424,29 +426,11 @@ class LandmarkPlanner {
         text: String,
         meters: Int,
     ): LandmarkHint {
-        return LandmarkHint(
-            turn = headingTurn(heading),
-            meters = meters,
-            text = text,
-            storeName = goal.shortName,
-            remaining = remaining,
-            mode = mode,
-            headingDeg = heading,
-            elevationDeg = elevation,
-            stage = stage.name.lowercase(),
-        )
+        return landmarkPointing(goal, remaining, mode, heading, elevation, text, meters, stage)
     }
 
     private fun arrive(goal: LandmarkGoal, remaining: Int): LandmarkHint {
-        return LandmarkHint(
-            turn = "arrive",
-            meters = 0,
-            text = "已到门口",
-            storeName = goal.shortName,
-            remaining = remaining.coerceAtMost(0),
-            mode = MODE_ARRIVE,
-            stage = LandmarkStage.ARRIVED.name.lowercase(),
-        )
+        return landmarkArrive(goal, remaining)
     }
 
     companion object {

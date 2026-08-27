@@ -105,5 +105,53 @@ class VisualInertialTest {
         assertFalse(stats.usable)
     }
 
+    @Test
+    fun briefImuGapDoesNotGoLost() {
+        val filter = VisualInertialFilter()
+        filter.reset(0L)
+        repeat(10) { i ->
+            filter.ingestImu(
+                ImuSample(
+                    tNs = (i + 1) * 10_000_000L,
+                    gx = 0f, gy = 0f, gz = 0f,
+                    ax = 0f, ay = 0f, az = 9.81f,
+                ),
+            )
+        }
+        filter.ingestImu(
+            ImuSample(
+                tNs = 300_000_000L,
+                gx = 0f, gy = 0f, gz = 0f,
+                ax = 0f, ay = 0f, az = 9.81f,
+            ),
+        )
+        assertTrue(filter.quality() != TrackQuality.LOST)
+    }
+
+    @Test
+    fun sustainedImuGapGoesLost() {
+        val filter = VisualInertialFilter()
+        filter.reset(0L)
+        repeat(10) { i ->
+            filter.ingestImu(
+                ImuSample(
+                    tNs = (i + 1) * 10_000_000L,
+                    gx = 0f, gy = 0f, gz = 0f,
+                    ax = 0f, ay = 0f, az = 9.81f,
+                ),
+            )
+        }
+        repeat(20) { i ->
+            filter.ingestImu(
+                ImuSample(
+                    tNs = 100_000_000L + (i + 1) * 200_000_000L,
+                    gx = 0f, gy = 0f, gz = 0f,
+                    ax = 0f, ay = 0f, az = 9.81f,
+                ),
+            )
+        }
+        assertEquals(TrackQuality.LOST, filter.quality())
+    }
+
     private fun abs(v: Float) = if (v < 0f) -v else v
 }

@@ -26,7 +26,7 @@
 | Phase | 必须看到 | 超时后 |
 | --- | --- | --- |
 | CxrReady | 双回调都 true | 不能开流 |
-| GlassStarting | `appStart` 一次，随后 `cmd=ready` | 停在失败原因，禁止再 appStart 刷 |
+| GlassStarting | `ensure`/`appStart` 一次，随后 `cmd=ready`。打开到餐或页丢失过 2.5s 宽限后可再拉 | 同一次失败不要连刷 `appStart` |
 | GlassReady | `CMD_READY`；**此前禁止** `p2p.offer` | — |
 | GroupCreating | `PhoneP2p group ready`，同 attempt 只建一次组 | `removeGroup` 后才允许用户重试 |
 | PeerJoining | 眼镜 `joined as p2p client ip=192.168.49.*` | 完整清理，不换另一套入网 |
@@ -80,8 +80,15 @@ adb -s <phone> shell dumpsys wifi | rg "mP2pGroup|networkName|interface"
 
 - 现象：一次连接里 `appStart` 两次，镜片闪、Wi-Fi hold 被打断。
 - 根因：安装失败回退 `queryAndStart`，以及 resume / 开流再拉一次。
-- 最终设计：`appStart` 2s 去重；安装回调直接忽略。
-- 禁止再做：安装失败再自动 start。
+- 最终设计：`GlassForegroundPolicy` 2s 去重；入网 pause 有 2.5s 宽限；安装回调直接忽略。打开到餐 `onResume` 走 `ensure("activity")`。
+- 禁止再做：安装失败再自动 start；`resume=false` 立刻 `appStart`（Direct 入网会闪）。
+
+### 10. CustomApp 不在前台却继续建组
+
+- 现象：手机停在「眼镜 Wi-Fi 正在打开」，镜片黑屏。`pidof com.glass.nav.glass` 空，焦点在乐奇桌面。
+- 根因：`onGlassAppResume(false)` 只清 `hudOpened`，`glassReady` 仍为 true。`begin()` 跳过 `GlassStarting`，offer 没人接。手机 App 已在前台时不会再走 `connect()`/`onLinkReady()`。
+- 最终设计：离开前台立刻清 `ready`。宽限结束后 `onGlassLost` 回到 `GlassStarting` 并 `ensure`。打开到餐必须 `phoneWantsGlass` + `ensure`。
+- 禁止再做：用过期的 `glassReady` 发 `p2p.offer`；用 ADB `am start` 代替 CXR `appStart`。
 
 ### 4. STA 与 P2P 并发
 

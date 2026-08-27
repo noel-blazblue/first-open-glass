@@ -18,6 +18,7 @@ class SpatialHost(private val context: Context) {
     val renderer = WorldAnchorRenderer()
     @Volatile var running: Boolean = false
         private set
+    private var everGood: Boolean = false
     private var wifiCursor = PoseSendCursor()
     private var cxrCursor = PoseSendCursor()
 
@@ -25,6 +26,7 @@ class SpatialHost(private val context: Context) {
         if (running) return
         SensorProbe.dump(context, imu)
         tracker.reset()
+        everGood = false
         imu.onSample = { sample -> tracker.onImu(sample) }
         imu.start()
         hub.onGray = { tNs, w, h, gray, sharp ->
@@ -46,6 +48,7 @@ class SpatialHost(private val context: Context) {
         hub.stop()
         imu.stop()
         tracker.reset()
+        everGood = false
         occupancy.recenter(Pose3())
         wifiCursor = PoseSendCursor()
         cxrCursor = PoseSendCursor()
@@ -58,8 +61,15 @@ class SpatialHost(private val context: Context) {
     }
 
     fun pose(): Pose3 = tracker.pose()
-    fun quality(): TrackQuality = tracker.quality()
-    fun navPose(): NavPose = tracker.navPose()
+    fun quality(): TrackQuality {
+        val raw = tracker.quality()
+        if (raw == TrackQuality.GOOD) everGood = true
+        return if (raw == TrackQuality.LOST && !everGood) TrackQuality.WEAK else raw
+    }
+    fun navPose(): NavPose {
+        val pose = tracker.navPose()
+        return pose.copy(tracking = quality().name.lowercase())
+    }
 
     fun shouldSendWifi(): Boolean {
         if (!running) return false

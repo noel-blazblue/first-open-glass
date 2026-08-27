@@ -23,6 +23,7 @@ data class HudCard(
     val sessionId: String = "",
     val tracking: String = "",
     val waypoints: String = "",
+    val pose: String = POSE_IDLE,
 ) {
     val isTalk: Boolean
         get() = layout == LAYOUT_TALK
@@ -67,6 +68,11 @@ data class HudCard(
         const val LAYOUT_TALK = "talk"
         const val LAYOUT_CARD = "card"
         const val LAYOUT_NAV = "nav"
+        const val POSE_IDLE = "idle"
+        const val POSE_LISTEN = "listen"
+        const val POSE_THINK = "think"
+        const val POSE_SPEAK = "speak"
+        const val POSE_LOOK = "look"
 
         fun wrap(text: String, width: Int, maxLines: Int): List<String> {
             val clean = text.replace(Regex("[\\r\\n]+"), "").trim().ifBlank { return emptyList() }
@@ -83,17 +89,18 @@ data class HudCard(
             return if (lines.isEmpty()) listOf("Hi, 我在听") else lines
         }
 
-        fun talk(speech: String, skill: String = "none"): HudCard {
+        fun talk(speech: String, skill: String = "none", pose: String = POSE_IDLE): HudCard {
             val line = speech.replace(Regex("[\\r\\n]+"), "").trim().ifBlank { "Hi, 我在听" }
             return HudCard(
                 skill = skill,
                 layout = LAYOUT_TALK,
                 speech = line.take(SPEECH),
+                pose = pose,
             )
         }
 
         fun idle(): HudCard {
-            return talk("Hi, 我在听")
+            return talk("Hi, 我在听", pose = POSE_IDLE)
         }
 
         fun listening(
@@ -102,9 +109,9 @@ data class HudCard(
             navCard: HudCard? = null,
         ): HudCard {
             if (navCard != null && navCard.skill == "nav") return navCard
-            if (heard.isNotBlank()) return talk(heard)
+            if (heard.isNotBlank()) return talk(heard, pose = POSE_LISTEN)
             if (match != null) return fromStore(match.store)
-            return talk("Hi, 我在听")
+            return talk("Hi, 我在听", pose = POSE_LISTEN)
         }
 
         fun thinking(
@@ -113,7 +120,7 @@ data class HudCard(
             navCard: HudCard? = null,
         ): HudCard {
             if (navCard != null && navCard.skill == "nav") return navCard
-            return talk("思考中")
+            return talk("思考中", pose = POSE_THINK)
         }
 
         fun answering(
@@ -123,7 +130,13 @@ data class HudCard(
             navCard: HudCard? = null,
         ): HudCard {
             if (navCard != null && navCard.skill == "nav") return navCard
-            return talk(partial.ifBlank { if (done) "Hi, 我在听" else "思考中" })
+            val line = partial.ifBlank { if (done) "Hi, 我在听" else "思考中" }
+            val pose = when {
+                done && partial.isBlank() -> POSE_IDLE
+                partial.isBlank() -> POSE_THINK
+                else -> POSE_SPEAK
+            }
+            return talk(line, pose = pose)
         }
 
         fun talkListening(): HudCard {
@@ -135,7 +148,7 @@ data class HudCard(
         }
 
         fun talkReply(heard: String, hud: String, speak: String): HudCard {
-            return talk(speak.ifBlank { hud }.ifBlank { "Hi, 我在听" })
+            return talk(speak.ifBlank { hud }.ifBlank { "Hi, 我在听" }, pose = POSE_SPEAK)
         }
 
         fun shooting(match: MatchResult? = null, current: HudCard? = null): HudCard {
@@ -151,7 +164,7 @@ data class HudCard(
                     extra = "请看向店招",
                 ).clipped()
             }
-            return talk("正在拍照")
+            return talk("正在拍照", pose = POSE_LOOK)
         }
 
         fun fromMatch(result: MatchResult): HudCard {
@@ -232,7 +245,7 @@ data class HudCard(
         }
 
         fun observe(label: String): HudCard {
-            return talk(label.take(LINE), skill = "observe")
+            return talk(label.take(LINE), skill = "observe", pose = POSE_LOOK)
         }
 
         fun fromStore(store: Store, extra: String? = null): HudCard {

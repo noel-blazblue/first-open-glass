@@ -12,7 +12,6 @@ import com.rokid.cxr.link.CXRLink
 import com.rokid.cxr.link.callbacks.IAudioStreamCbk
 import com.rokid.cxr.link.callbacks.ICXRLinkCbk
 import com.rokid.cxr.link.callbacks.ICustomCmdCbk
-import com.rokid.cxr.link.callbacks.IGlassAppCbk
 import com.rokid.cxr.link.utils.CxrDefs
 import com.rokid.cxr.link.utils.GlassInfo
 import java.util.concurrent.atomic.AtomicLong
@@ -27,19 +26,25 @@ object CxrLinkHost {
         private set
     @Volatile var glassBtConnected: Boolean = false
         private set
-    @Volatile var hudOpened: Boolean = false
-        private set
-    @Volatile var glassReady: Boolean = false
-        private set
+    val hudOpened: Boolean
+        get() = glassApp.opened
+    val glassReady: Boolean
+        get() = glassApp.ready
     @Volatile var capturingAudio: Boolean = false
         private set
     @Volatile var closeGlassWhenReady: Boolean = false
+    var phoneWantsGlass: Boolean
+        get() = glassApp.phoneWantsGlass
+        set(value) {
+            glassApp.phoneWantsGlass = value
+        }
     private var app: Application? = null
 
     var onStatus: ((String) -> Unit)? = null
     var onAudioPcm: ((ByteArray) -> Unit)? = null
     var onHudOpened: (() -> Unit)? = null
     var onGlassReady: (() -> Unit)? = null
+    var onGlassLost: (() -> Unit)? = null
     var onFrame: ((ByteArray) -> Unit)? = null
     var onPose: ((com.glass.dining.shared.nav.NavPose) -> Unit)? = null
     var onRtc: ((String, String?) -> Unit)? = null
@@ -51,21 +56,21 @@ object CxrLinkHost {
     @Volatile private var audioPackets: Int = 0
 
     private val main = Handler(Looper.getMainLooper())
+    private val glassApp = GlassAppSession(main)
     @Volatile private var connecting: Boolean = false
-    @Volatile private var lastHudNotify: Long = 0
-    @Volatile private var lastAppStartAt: Long = 0
     @Volatile private var lastCard: HudCard = HudCard.idle()
     @Volatile private var photoWaiter: ((ByteArray?, String?) -> Unit)? = null
     private val hudSeq = AtomicLong(0)
 
-    private fun notifyHudOpened() {
-        val now = android.os.SystemClock.uptimeMillis()
-        if (hudOpened && now - lastHudNotify < 1_500) return
-        lastHudNotify = now
-        hudOpened = true
-        showCard(lastCard)
-        if (wantAudio) startGlassMic()
-        onHudOpened?.invoke()
+    init {
+        glassApp.onStatus = { onStatus?.invoke(it) }
+        glassApp.onOpened = {
+            showCard(lastCard)
+            if (wantAudio) startGlassMic()
+            onHudOpened?.invoke()
+        }
+        glassApp.onReady = { onGlassReady?.invoke() }
+        glassApp.onLost = { onGlassLost?.invoke() }
     }
 
     private val photoTimeout = Runnable {
@@ -96,6 +101,7 @@ object CxrLinkHost {
 
         override fun onGlassWearingStatus(wearing: Boolean) {
             Log.i(TAG, "onGlassWearingStatus=$wearing")
+            glassApp.onWearing(wearing)
         }
 
         override fun onGlassAiAssistStart() {
@@ -104,6 +110,7 @@ object CxrLinkHost {
 
         override fun onGlassAiAssistStop() {
             Log.i(TAG, "onGlassAiAssistStop")
+            glassApp.onAiAssistStop()
         }
 
         override fun onGlassAiInterrupt(interrupted: Boolean) {
@@ -137,56 +144,6 @@ object CxrLinkHost {
         }
     }
 
-    private val appCbk = object : IGlassAppCbk {
-        override fun onQueryAppResult(installed: Boolean) {
-            Log.i(TAG, "onQueryAppResult installed=$installed")
-            onStatus?.invoke(
-                if (installed) "眼镜到餐页已安装" else "眼镜还没装到餐 APK，请用电脑 adb 安装 apps/glass-nav（installGlassAdb）",
-            )
-            if (installed && linkReady()) {
-                startGlassApp()
-            }
-        }
-
-        override fun onInstallAppResult(success: Boolean) {
-            Log.w(TAG, "onInstallAppResult=$success ignored; glass APK is ADB-only")
-            onStatus?.invoke("眼镜 APK 只能 ADB 安装，已忽略 CXR 安装回调")
-        }
-
-        override fun onOpenAppResult(success: Boolean) {
-            hudOpened = success
-            Log.i(TAG, "onOpenAppResult=$success")
-            onStatus?.invoke(if (success) "镜片闲置卡已打开" else "启动眼镜到餐页失败")
-            if (success) {
-                main.postDelayed({
-                    sendCmd(NavProtocol.CMD_HELLO)
-                    sendCmd(NavProtocol.CMD_WIFI_KEEP)
-                    notifyHudOpened()
-                }, 400)
-            }
-        }
-
-        override fun onStopAppResult(success: Boolean) {
-            hudOpened = false
-            glassReady = false
-            onStatus?.invoke("眼镜到餐页已停止")
-        }
-
-        override fun onUnInstallAppResult(success: Boolean) {
-            onStatus?.invoke(if (success) "已卸载眼镜 APK" else "卸载失败")
-        }
-
-        override fun onGlassAppResume(resumed: Boolean) {
-            Log.i(TAG, "onGlassAppResume=$resumed")
-            hudOpened = resumed
-            if (resumed) {
-                sendCmd(NavProtocol.CMD_HELLO)
-                sendCmd(NavProtocol.CMD_WIFI_KEEP)
-                main.post { notifyHudOpened() }
-            }
-        }
-    }
-
     private val cmdCbk = object : ICustomCmdCbk {
         override fun onCustomCmdResult(key: String?, payload: ByteArray?) {
             if (payload == null || payload.isEmpty()) return
@@ -200,13 +157,7 @@ object CxrLinkHost {
             Log.i(TAG, "up key=$key cmd=$cmd size=${caps.size()}")
             when (cmd) {
                 NavProtocol.CMD_READY -> {
-                    hudOpened = true
-                    glassReady = true
-                    main.post {
-                        showCard(lastCard)
-                        if (wantAudio) startGlassMic()
-                        onGlassReady?.invoke()
-                    }
+                    main.post { glassApp.onCmdReady() }
                 }
                 NavProtocol.CMD_PCM -> {
                     val pcm = readBinary(caps, 1)
@@ -267,9 +218,7 @@ object CxrLinkHost {
             return "正在连接眼镜…"
         }
         connecting = true
-        hudOpened = false
-        glassReady = false
-        lastHudNotify = 0
+        glassApp.reset()
         cxrConnected = false
         glassBtConnected = false
         capturingAudio = false
@@ -374,7 +323,7 @@ object CxrLinkHost {
                 return@post
             }
             if (!hudOpened) {
-                queryAndStart()
+                ensureGlassApp("hud")
                 return@post
             }
             sendCmd(
@@ -397,6 +346,7 @@ object CxrLinkHost {
                     clipped.sessionId,
                     clipped.tracking,
                     clipped.waypoints,
+                    clipped.pose,
                 ),
             )
             Log.i(TAG, "hud.card layout=${clipped.layout} skill=${clipped.skill} title=${clipped.title}")
@@ -426,64 +376,24 @@ object CxrLinkHost {
     private fun onLinkReady() {
         if (closeGlassWhenReady) {
             closeGlassWhenReady = false
+            phoneWantsGlass = false
             stopGlassApp()
             return
         }
-        if (!hudOpened) queryAndStart()
+        ensureGlassApp("link")
     }
 
-    fun queryAndStart() {
-        val link = sharedLink ?: return
-        if (!linkReady()) {
-            onStatus?.invoke("还没连上眼镜蓝牙")
-            return
-        }
-        if (closeGlassWhenReady) {
-            closeGlassWhenReady = false
-            stopGlassApp()
-            return
-        }
-        try {
-            link.appIsInstalled(appCbk)
-        } catch (error: Exception) {
-            Log.w(TAG, "appIsInstalled failed", error)
-            onStatus?.invoke("查询眼镜 APK 失败: ${error.message}")
-        }
-    }
-
-    fun startGlassApp() {
-        val link = sharedLink ?: return
-        if (!linkReady()) return
-        if (closeGlassWhenReady) {
-            closeGlassWhenReady = false
-            stopGlassApp()
-            return
-        }
-        val now = android.os.SystemClock.uptimeMillis()
-        if (now - lastAppStartAt < 2_000) {
-            Log.i(TAG, "appStart skipped, debounce")
-            return
-        }
-        lastAppStartAt = now
-        try {
-            link.appStart(NavProtocol.glassEntry(), appCbk)
-            Log.i(TAG, "appStart ${NavProtocol.glassEntry()}")
-        } catch (error: Exception) {
-            Log.w(TAG, "appStart failed", error)
-            onStatus?.invoke("启动眼镜页失败: ${error.message}")
-        }
+    fun ensureGlassApp(reason: String) {
+        glassApp.ensure(reason)
     }
 
     fun stopGlassApp() {
-        val link = sharedLink ?: return
-        sendCmd(NavProtocol.CMD_P2P_STOP)
-        sendCmd(NavProtocol.CMD_RTC_STOP)
-        try {
-            link.appStop(appCbk)
-            Log.i(TAG, "appStop issued")
-        } catch (error: Exception) {
-            Log.w(TAG, "appStop failed", error)
-        }
+        glassApp.stopGlassApp()
+    }
+
+    fun sendHelloAndWifi() {
+        sendCmd(NavProtocol.CMD_HELLO)
+        sendCmd(NavProtocol.CMD_WIFI_KEEP)
     }
 
     fun linkReady(): Boolean = cxrConnected && glassBtConnected && sharedLink != null
@@ -525,6 +435,7 @@ object CxrLinkHost {
                 connecting = false
                 if (closeGlassWhenReady) {
                     closeGlassWhenReady = false
+                    phoneWantsGlass = false
                     main.post { stopGlassApp() }
                 } else {
                     main.post { onLinkReady() }

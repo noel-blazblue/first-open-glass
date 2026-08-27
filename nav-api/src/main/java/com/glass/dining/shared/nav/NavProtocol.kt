@@ -304,6 +304,7 @@ object NavProtocol {
         sessionId: String = "",
         tracking: String = "",
         waypoints: String = "",
+        pose: String = "",
     ): String {
         return JSONObject()
             .put("title", title)
@@ -323,6 +324,7 @@ object NavProtocol {
             .put("sessionId", sessionId)
             .put("tracking", tracking)
             .put("waypoints", waypoints)
+            .put("pose", pose)
             .toString()
     }
 
@@ -352,6 +354,7 @@ object NavProtocol {
                 sessionId = obj.optString("sessionId"),
                 tracking = obj.optString("tracking"),
                 waypoints = obj.optString("waypoints"),
+                pose = obj.optString("pose"),
             )
         } catch (_: Exception) {
             HudLines(speech = raw.take(24), layout = LAYOUT_TALK)
@@ -437,6 +440,7 @@ data class HudLines(
     val sessionId: String = "",
     val tracking: String = "",
     val waypoints: String = "",
+    val pose: String = "idle",
 ) {
     val isTalk: Boolean
         get() = layout == NavProtocol.LAYOUT_TALK

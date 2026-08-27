@@ -22,7 +22,7 @@ data class GroundPlane(
 
 class OccupancyGrid(
     val cellM: Float = 0.25f,
-    val extentM: Float = 8f,
+    val extentM: Float = 14f,
 ) {
     private val size: Int = ((extentM * 2f) / cellM).roundToInt().coerceAtLeast(8)
     private val cells = Array(size * size) { OccupancyCell() }
@@ -75,7 +75,7 @@ class OccupancyGrid(
             val p = pose.position + Vec3(
                 (sin(yaw) * meters).toFloat(),
                 (cos(yaw) * meters).toFloat(),
-                -plane.heightM,
+                pose.position.z - plane.heightM,
             )
             if (isFree(p)) p else null
         }
@@ -102,7 +102,7 @@ class OccupancyGrid(
 }
 
 object LocalPath {
-    val CHEVRON_M = floatArrayOf(2.2f, 3.6f, 5.2f)
+    val CHEVRON_M = floatArrayOf(6f, 9f, 12f)
 
     fun conservative(grid: OccupancyGrid, pose: Pose3, headingDeg: Float): List<Vec3> {
         return grid.waypoints(pose, headingDeg, CHEVRON_M)

@@ -20,6 +20,8 @@ data class TrackerState(
     val lastCamNs: Long = 0L,
     val stillHits: Int = 0,
     val visualHits: Int = 0,
+    val lostHits: Int = 0,
+    val recoverHits: Int = 0,
 )
 
 /**
@@ -41,7 +43,8 @@ class VisualInertialFilter(
             state = state.copy(lastImuNs = sample.tNs, pose = state.pose.copy(tNs = sample.tNs))
             return
         }
-        val dt = ((sample.tNs - state.lastImuNs).coerceIn(1_000_000L, 40_000_000L)) / 1_000_000_000f
+        val rawDtNs = sample.tNs - state.lastImuNs
+        val dt = (rawDtNs.coerceIn(1_000_000L, 40_000_000L)) / 1_000_000_000f
         val gx = sample.gx * calib.gyroScale.x
         val gy = sample.gy * calib.gyroScale.y
         val gz = sample.gz * calib.gyroScale.z
@@ -64,19 +67,22 @@ class VisualInertialFilter(
         } else {
             state.pose.position + velocity * dt
         }
-        val quality = when {
-            dt > 0.05f -> TrackQuality.LOST
+        val candidate = when {
+            rawDtNs > GAP_LOST_NS -> TrackQuality.LOST
             stillHits >= ZUPT_HITS -> if (state.visualHits > 0) TrackQuality.GOOD else TrackQuality.WEAK
             velocity.length() > 3.5f -> TrackQuality.LOST
             state.visualHits > 0 -> TrackQuality.GOOD
             else -> TrackQuality.WEAK
         }
+        val latched = latchQuality(state.quality, candidate, state.lostHits, state.recoverHits)
         state = state.copy(
             pose = Pose3(sample.tNs, position, orient),
             velocity = velocity,
-            quality = quality,
+            quality = latched.quality,
             lastImuNs = sample.tNs,
             stillHits = stillHits,
+            lostHits = latched.lostHits,
+            recoverHits = latched.recoverHits,
         )
     }
 
@@ -99,12 +105,19 @@ class VisualInertialFilter(
         }
         val pose = state.pose.copy(tNs = sample.tNs, orientation = orient)
         val keys = maybeKeyframe(pose, sample.grid)
+        val latched = if (quality == TrackQuality.GOOD) {
+            LatchedQuality(TrackQuality.GOOD, 0, 0)
+        } else {
+            latchQuality(state.quality, quality, state.lostHits, state.recoverHits)
+        }
         state = state.copy(
             pose = pose,
-            quality = quality,
+            quality = latched.quality,
             visualHits = visualHits,
             lastCamNs = sample.tNs,
             keyframes = keys,
+            lostHits = latched.lostHits,
+            recoverHits = latched.recoverHits,
         )
         return relocated
     }
@@ -122,6 +135,8 @@ class VisualInertialFilter(
             pose = hit.pose.copy(tNs = state.pose.tNs),
             velocity = Vec3(),
             quality = TrackQuality.GOOD,
+            lostHits = 0,
+            recoverHits = 0,
         )
         return true
     }
@@ -141,6 +156,9 @@ class VisualInertialFilter(
         const val GRAVITY = 9.81f
         const val ZUPT_HITS = 8
         const val LOOP_GRID = 18f
+        const val GAP_LOST_NS = 180_000_000L
+        const val LOST_HITS = 18
+        const val RECOVER_HITS = 8
 
         fun isStill(gx: Float, gy: Float, gz: Float, accel: Vec3): Boolean {
             val gyro = sqrt(gx * gx + gy * gy + gz * gz)
@@ -189,9 +207,39 @@ fun headingFromYaw(currentYaw: Float, targetYaw: Float): Float {
     return Angle.wrapDeg(targetYaw - currentYaw)
 }
 
-fun pointAhead(pose: Pose3, meters: Float, headingOffsetDeg: Float = 0f): Vec3 {
+data class LatchedQuality(
+    val quality: TrackQuality,
+    val lostHits: Int,
+    val recoverHits: Int,
+)
+
+fun latchQuality(
+    previous: TrackQuality,
+    candidate: TrackQuality,
+    lostHits: Int,
+    recoverHits: Int,
+): LatchedQuality {
+    if (candidate == TrackQuality.LOST) {
+        val n = lostHits + 1
+        val quality = if (n >= VisualInertialFilter.LOST_HITS) TrackQuality.LOST else previous
+        return LatchedQuality(quality, n, 0)
+    }
+    val recovering = previous == TrackQuality.LOST
+    val n = if (recovering) recoverHits + 1 else 0
+    if (recovering && n < VisualInertialFilter.RECOVER_HITS) {
+        return LatchedQuality(TrackQuality.LOST, 0, n)
+    }
+    return LatchedQuality(candidate, 0, 0)
+}
+
+fun pointAhead(
+    pose: Pose3,
+    meters: Float,
+    headingOffsetDeg: Float = 0f,
+    eyeHeightM: Float = SensorCalibration.rokidGlass3().eyeHeightM,
+): Vec3 {
     val yaw = Math.toRadians((pose.yawDeg + headingOffsetDeg).toDouble())
     val dx = (sin(yaw) * meters).toFloat()
     val dy = (cos(yaw) * meters).toFloat()
-    return pose.position + Vec3(dx, dy, -pose.position.z)
+    return pose.position + Vec3(dx, dy, -eyeHeightM)
 }
