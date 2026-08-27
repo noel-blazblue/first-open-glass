@@ -141,6 +141,7 @@ object GlassRtc {
         val encoder = DefaultVideoEncoderFactory(root.eglBaseContext, true, true)
         val decoder = DefaultVideoDecoderFactory(root.eglBaseContext)
         factory = PeerConnectionFactory.builder()
+            .setOptions(p2pRtcOptions())
             .setVideoEncoderFactory(encoder)
             .setVideoDecoderFactory(decoder)
             .createPeerConnectionFactory()
@@ -251,6 +252,13 @@ object GlassRtc {
         return PeerConnection.RTCConfiguration(iceServers()).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+            tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.DISABLED
+        }
+    }
+
+    private fun p2pRtcOptions(): PeerConnectionFactory.Options {
+        return PeerConnectionFactory.Options().apply {
+            disableNetworkMonitor = true
         }
     }
 
@@ -283,6 +291,7 @@ object GlassRtc {
         }
         override fun onIceCandidate(candidate: IceCandidate?) {
             candidate ?: return
+            Log.i(TAG, "local ice ${candidate.sdp}")
             emit(
                 NavProtocol.CMD_RTC_ICE,
                 NavProtocol.rtcIceJson(candidate.sdpMid, candidate.sdpMLineIndex, candidate.sdp),

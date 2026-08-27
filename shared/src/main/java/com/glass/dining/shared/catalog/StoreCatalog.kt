@@ -113,6 +113,9 @@ object StoreCatalogJson {
             put("hasPrivateRoom", store.hasPrivateRoom)
             put("lat", store.lat)
             put("lng", store.lng)
+            put("floor", store.floor)
+            put("source", store.source)
+            put("catalogBacked", store.catalogBacked)
             put("tags", JSONArray(store.tags))
             put("signatures", JSONArray(store.signatures))
             put("suitable", JSONArray(store.suitable))
@@ -152,6 +155,9 @@ object StoreCatalogJson {
             answers = emptyMap(),
             lat = obj.optDouble("lat"),
             lng = obj.optDouble("lng"),
+            floor = obj.optString("floor"),
+            source = obj.optString("source").ifBlank { "catalog" },
+            catalogBacked = obj.optBoolean("catalogBacked", obj.optString("source") != "amap"),
         )
     }
 

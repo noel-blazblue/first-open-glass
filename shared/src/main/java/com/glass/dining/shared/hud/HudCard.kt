@@ -16,11 +16,17 @@ data class HudCard(
     val turn: String = "",
     val meters: Int = 0,
     val remaining: Int = 0,
+    val mode: String = "",
+    val headingDeg: Float = 0f,
+    val elevationDeg: Float = 0f,
+    val stage: String = "",
 ) {
     val isTalk: Boolean
         get() = layout == LAYOUT_TALK
     val isNav: Boolean
         get() = layout == LAYOUT_NAV || skill == "nav"
+    val visual: Boolean
+        get() = isNav && mode.isNotBlank()
 
     fun clipped(): HudCard {
         if (isTalk) {
@@ -222,7 +228,22 @@ data class HudCard(
             ).clipped()
         }
 
+        fun observe(label: String): HudCard {
+            return talk(label.take(LINE), skill = "observe")
+        }
+
         fun fromStore(store: Store, extra: String? = null): HudCard {
+            if (!store.catalogBacked) {
+                val wait = if (store.distanceMeters > 0) "约${store.distanceMeters}米" else ""
+                return HudCard(
+                    title = store.shortName,
+                    meta = store.address.ifBlank { store.category }.take(LINE),
+                    wait = wait,
+                    extra = extra.orEmpty(),
+                    skill = "browse",
+                    layout = LAYOUT_CARD,
+                ).clipped()
+            }
             val wait = when {
                 !store.openNow -> "现在已打烊"
                 store.waitMinutes <= 0 -> "现在不用排队"
@@ -248,6 +269,10 @@ data class HudCard(
             text: String,
             extra: String = "",
             remaining: Int = 0,
+            mode: String = "",
+            headingDeg: Float = 0f,
+            elevationDeg: Float = 0f,
+            stage: String = "",
         ): HudCard {
             val turnLabel = when (turn) {
                 "left" -> "左转"
@@ -273,6 +298,10 @@ data class HudCard(
                 turn = turn,
                 meters = meters,
                 remaining = remaining,
+                mode = mode,
+                headingDeg = headingDeg,
+                elevationDeg = elevationDeg,
+                stage = stage,
             ).clipped()
         }
     }

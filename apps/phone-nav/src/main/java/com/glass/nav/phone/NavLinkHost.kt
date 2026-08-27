@@ -30,7 +30,7 @@ object NavLinkHost {
     var onStatus: ((String) -> Unit)? = null
     var onReady: (() -> Unit)? = null
     var onFrame: ((ByteArray) -> Unit)? = null
-    var onPose: ((Float) -> Unit)? = null
+    var onPose: ((com.glass.dining.shared.nav.NavPose) -> Unit)? = null
 
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var connecting: Boolean = false
@@ -127,8 +127,8 @@ object NavLinkHost {
                     }
                 }
                 NavProtocol.CMD_POSE -> {
-                    val yaw = readFloat(caps, 1)
-                    if (yaw != null) main.post { onPose?.invoke(yaw) }
+                    val parsed = NavProtocol.parsePose(readString(caps, 1))
+                    if (parsed != null) main.post { onPose?.invoke(parsed) }
                 }
                 NavProtocol.CMD_ERROR -> {
                     val msg = readString(caps, 1).orEmpty()

@@ -26,9 +26,34 @@ class NavActivity : android.app.Activity() {
 
     private val drawTick = object : Runnable {
         override fun run() {
+            hud.pitchDeg = imu.pitchDegrees
             hud.invalidate()
-            main.postDelayed(this, 200)
+            val gap = if (hud.card.visual) 50L else 200L
+            main.postDelayed(this, gap)
         }
+    }
+
+    private val poseTick = object : Runnable {
+        override fun run() {
+            maybeSendPose()
+            main.postDelayed(this, 1_000)
+        }
+    }
+
+    private var lastPoseYaw: Float = 0f
+    private var sentPose: Boolean = false
+
+    private fun maybeSendPose() {
+        if (wantMic) return
+        if (!navActive && !hud.card.isNav) return
+        val yaw = imu.yawDegrees
+        var delta = yaw - lastPoseYaw
+        while (delta > 180f) delta -= 360f
+        while (delta < -180f) delta += 360f
+        if (sentPose && kotlin.math.abs(delta) < 12f) return
+        lastPoseYaw = yaw
+        sentPose = true
+        bridge.sendPose(imu.pose)
     }
 
     private val captureTick = object : Runnable {
@@ -61,6 +86,10 @@ class NavActivity : android.app.Activity() {
         hud = NavHudView(this)
         hud.card = HudLines.idle()
         setContentView(hud)
+        GlassWifi.hold(this) { line ->
+            hud.status = line
+            hud.invalidate()
+        }
         imu = ImuTracker(this)
         camera = NavCamera(this)
         mic = GlassMic(this)
@@ -116,6 +145,10 @@ class NavActivity : android.app.Activity() {
                 camera.markIdle()
             },
             onRtc = { cmd, json -> handleRtc(cmd, json) },
+            onPhoneGone = {
+                Log.i(TAG, "phone gone, release hud")
+                finishAndRemoveTask()
+            },
         )
         mic.onPcm = { pcm -> bridge.sendPcm(pcm) }
         bridge.start()
@@ -125,9 +158,12 @@ class NavActivity : android.app.Activity() {
 
     override fun onResume() {
         super.onResume()
+        GlassWifi.ensure()
         imu.start()
         main.removeCallbacks(drawTick)
         main.post(drawTick)
+        main.removeCallbacks(poseTick)
+        main.post(poseTick)
         if (navActive && !rtcActive) {
             openCamera()
         }
@@ -138,6 +174,7 @@ class NavActivity : android.app.Activity() {
 
     override fun onPause() {
         main.removeCallbacks(drawTick)
+        main.removeCallbacks(poseTick)
         main.removeCallbacks(captureTick)
         main.removeCallbacks(frameTimeout)
         if (!isFinishing) {
@@ -162,29 +199,8 @@ class NavActivity : android.app.Activity() {
     }
 
     private fun showHint(hint: NavHint) {
-        hud.card = HudLines(
-            title = "去${hint.storeName.ifBlank { "目的店" }}".take(16),
-            meta = hintMeta(hint),
-            wait = hint.text.ifBlank { "跟着走" }.take(16),
-            extra = if (hint.turn == "arrive") "可以说取消" else if (hint.remaining > 0) "剩余${hint.remaining}米" else "",
-            skill = NavProtocol.SKILL_NAV,
-            layout = NavProtocol.LAYOUT_NAV,
-            speech = "",
-            turn = hint.turn,
-            meters = hint.meters,
-            remaining = hint.remaining,
-        )
+        hud.card = HudLines.fromHint(hint)
         hud.invalidate()
-    }
-
-    private fun hintMeta(hint: NavHint): String {
-        val turn = when (hint.turn) {
-            "left" -> "左转"
-            "right" -> "右转"
-            "arrive" -> "到了"
-            else -> "直行"
-        }
-        return if (hint.turn == "arrive" || hint.meters <= 0) turn else "$turn ${hint.meters}米"
     }
 
     private fun snapPhoto() {
@@ -203,6 +219,7 @@ class NavActivity : android.app.Activity() {
         when (cmd) {
             NavProtocol.CMD_P2P_OFFER -> joinP2p(json)
             NavProtocol.CMD_P2P_STOP -> GlassP2p.stop()
+            NavProtocol.CMD_WIFI_KEEP -> GlassWifi.ensure()
             NavProtocol.CMD_RTC_START -> startRtc()
             NavProtocol.CMD_RTC_STOP -> stopRtc()
             NavProtocol.CMD_RTC_SDP -> GlassRtc.onRemoteSdp(json)

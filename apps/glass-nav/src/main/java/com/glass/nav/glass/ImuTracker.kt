@@ -6,6 +6,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.util.Log
+import com.glass.dining.shared.nav.NavPose
 import java.util.concurrent.atomic.AtomicInteger
 
 class ImuTracker(context: Context) : SensorEventListener {
@@ -16,9 +17,18 @@ class ImuTracker(context: Context) : SensorEventListener {
     private val orientation = FloatArray(3)
     private var yawZero = 0f
     private val yawMilli = AtomicInteger(0)
+    private val pitchMilli = AtomicInteger(0)
+    private val rollMilli = AtomicInteger(0)
 
     val yawDegrees: Float
         get() = yawMilli.get() / 1000f
+    val pitchDegrees: Float
+        get() = pitchMilli.get() / 1000f
+    val rollDegrees: Float
+        get() = rollMilli.get() / 1000f
+
+    val pose: NavPose
+        get() = NavPose(yaw = yawDegrees, pitch = pitchDegrees, roll = rollDegrees)
 
     val sensorName: String
         get() = rotation?.name ?: "none"
@@ -29,7 +39,7 @@ class ImuTracker(context: Context) : SensorEventListener {
             Log.w(TAG, "no rotation/gyro sensor")
             return
         }
-        manager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_UI)
+        manager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)
         Log.i(TAG, "imu start name=${sensor.name} type=${sensor.type}")
     }
 
@@ -65,6 +75,8 @@ class ImuTracker(context: Context) : SensorEventListener {
         while (delta > 180f) delta -= 360f
         while (delta < -180f) delta += 360f
         yawMilli.set((delta * 1000f).toInt())
+        pitchMilli.set((Math.toDegrees(orientation[1].toDouble()) * 1000.0).toInt())
+        rollMilli.set((Math.toDegrees(orientation[2].toDouble()) * 1000.0).toInt())
     }
 
     companion object {

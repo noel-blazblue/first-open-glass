@@ -12,13 +12,13 @@ import android.net.wifi.p2p.WifiP2pManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.glass.dining.shared.link.P2pJoinPolicy
 import com.glass.dining.shared.nav.NavProtocol
 import com.glass.dining.shared.nav.P2pOffer
 import java.net.NetworkInterface
 
 /**
- * 眼镜用 WifiP2pManager 当客户端加入手机 GO。
- * 不用 WifiNetworkSpecifier，避免弹出系统「找不到设备」页盖住 HUD。
+ * 眼镜加入手机 Direct GO。唯一产品路径：原生 WifiP2pManager.discoverPeers/connect。
  */
 object GlassP2p {
     @Volatile var active: Boolean = false
@@ -34,15 +34,16 @@ object GlassP2p {
     private var receiverRegistered: Boolean = false
     private var lastP2pState: Int = -1
     private var lastWifiEnabled: Boolean = false
-    private var wifiOffHinted: Boolean = false
+    private var joined: Boolean = false
+    private var discoverDelayMs: Long = 2_000
 
     private val timeout = Runnable {
-        if (active) {
+        if (active && !joined) {
             fail(
                 if (!lastWifiEnabled) {
-                    "眼镜 Wi-Fi 关着。USB 调试时常会关掉，请拔掉 USB 或在眼镜里打开 Wi-Fi"
+                    "眼镜 Wi-Fi 一直没打开。USB 调试连上后固件常会关 Wi-Fi，请保持数据线"
                 } else {
-                    "眼镜没发现手机 Direct 组 wifi=$lastWifiEnabled p2pState=$lastP2pState"
+                    "眼镜 30s 没加入手机 Direct 组 wifi=$lastWifiEnabled p2pState=$lastP2pState"
                 },
             )
         }
@@ -50,10 +51,18 @@ object GlassP2p {
 
     private val retryDiscover = object : Runnable {
         override fun run() {
-            if (!active || connecting) return
-            enableWifiAndDiscover()
-            main.postDelayed(this, 1_500)
+            if (!P2pJoinPolicy.mayDiscover(active, joined) || connecting) return
+            startDiscovery()
+            discoverDelayMs = (discoverDelayMs + 1_000).coerceAtMost(5_000)
+            main.postDelayed(this, discoverDelayMs)
         }
+    }
+
+    private val connectWatch = Runnable {
+        if (!active || joined || !connecting) return@Runnable
+        connecting = false
+        Log.w(TAG, "connect watch: no group yet, retry discover")
+        startDiscovery()
     }
 
     private val receiver = object : BroadcastReceiver() {
@@ -63,29 +72,40 @@ object GlassP2p {
                     val state = intent.getIntExtra(WifiManager.EXTRA_WIFI_STATE, -1)
                     lastWifiEnabled = state == WifiManager.WIFI_STATE_ENABLED
                     Log.i(TAG, "wifi state=$state")
-                    if (active && lastWifiEnabled && !connecting) {
+                    if (active && lastWifiEnabled && P2pJoinPolicy.mayDiscover(active, joined)) {
                         startDiscovery()
                     }
                 }
                 WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION -> {
                     lastP2pState = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1)
                     Log.i(TAG, "p2p state=$lastP2pState")
-                    if (lastP2pState == WifiP2pManager.WIFI_P2P_STATE_ENABLED && active && !connecting) {
+                    if (lastP2pState == WifiP2pManager.WIFI_P2P_STATE_ENABLED &&
+                        P2pJoinPolicy.mayDiscover(active, joined) &&
+                        !connecting
+                    ) {
                         startDiscovery()
                     }
                 }
                 WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
-                    if (active) requestPeers()
+                    if (P2pJoinPolicy.mayDiscover(active, joined)) requestPeers()
                 }
                 WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
-                    if (!active) return
+                    if (!active || joined) return
                     val mgr = manager ?: return
                     val ch = channel ?: return
                     mgr.requestConnectionInfo(ch) { info ->
-                        if (info?.groupFormed == true && !info.isGroupOwner) {
-                            val ip = ipv4OnP2p().ifBlank { guessClientIp(offer?.goIp.orEmpty()) }
-                            Log.i(TAG, "joined as client ip=$ip go=${info.groupOwnerAddress}")
-                            succeed(ip)
+                        val ip = ipv4OnP2p()
+                        val ready = P2pJoinPolicy.readyIp(
+                            groupFormed = info?.groupFormed == true,
+                            isGroupOwner = info?.isGroupOwner == true,
+                            ipv4 = ip,
+                        )
+                        if (ready != null) {
+                            Log.i(TAG, "joined as p2p client ip=$ready go=${info?.groupOwnerAddress}")
+                            succeed(ready)
+                        } else if (info?.groupFormed == true && info.isGroupOwner != true) {
+                            Log.i(TAG, "group formed but no 192.168.49.x yet ip=$ip")
+                            main.postDelayed({ checkJoinedIp() }, 800)
                         }
                     }
                 }
@@ -94,23 +114,39 @@ object GlassP2p {
     }
 
     fun join(context: Context, next: P2pOffer, send: (String, String?) -> Unit) {
+        if (P2pJoinPolicy.ignoreOffer(joined, offer?.ssid, next.ssid)) {
+            this.send = send
+            this.offer = next
+            Log.i(TAG, "join ignored, already on ${next.ssid}")
+            return
+        }
+        if (P2pJoinPolicy.keepCurrentOffer(offer?.ssid, joined, next.ssid)) {
+            this.send = send
+            this.offer = next
+            Log.i(TAG, "join same ssid, keep trying")
+            GlassWifi.ensure()
+            return
+        }
         stopInternal(notify = false)
         this.app = context.applicationContext
         this.offer = next
         this.send = send
         active = true
         connecting = false
-        wifiOffHinted = false
+        joined = false
+        discoverDelayMs = 2_000
         main.post {
             try {
                 ensureManager(context.applicationContext)
                 registerReceiver(context.applicationContext)
-                enableWifiAndDiscover()
+                GlassWifi.ensure()
+                startDiscovery()
                 main.removeCallbacks(timeout)
                 main.removeCallbacks(retryDiscover)
-                main.postDelayed(timeout, 20_000)
-                main.postDelayed(retryDiscover, 1_500)
-                Log.i(TAG, "join ssid=${next.ssid} mac=${next.goMac} name=${next.goName}")
+                main.postDelayed(timeout, 30_000)
+                main.postDelayed(retryDiscover, discoverDelayMs)
+                hint("正在加入 ${next.ssid}")
+                Log.i(TAG, "join ssid=${next.ssid} mac=${next.goMac} name=${next.goName} attempt=${next.attemptId}")
             } catch (error: Exception) {
                 Log.w(TAG, "join failed", error)
                 fail("眼镜 Direct 启动失败: ${error.message}")
@@ -125,8 +161,10 @@ object GlassP2p {
     private fun stopInternal(notify: Boolean) {
         active = false
         connecting = false
+        joined = false
         main.removeCallbacks(timeout)
         main.removeCallbacks(retryDiscover)
+        main.removeCallbacks(connectWatch)
         val mgr = manager
         val ch = channel
         if (mgr != null && ch != null) {
@@ -161,24 +199,8 @@ object GlassP2p {
         }
     }
 
-    @Suppress("DEPRECATION")
-    private fun enableWifiAndDiscover() {
-        val context = app ?: return
-        val wifi = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        lastWifiEnabled = wifi.isWifiEnabled
-        if (!wifi.isWifiEnabled) {
-            val ok = wifi.setWifiEnabled(true)
-            Log.i(TAG, "wifi was off, setWifiEnabled=$ok")
-            if (!wifiOffHinted) {
-                wifiOffHinted = true
-                hint("眼镜 Wi-Fi 关着。USB 调试时常会关掉，请拔线或在眼镜里打开 Wi-Fi")
-            }
-            return
-        }
-        startDiscovery()
-    }
-
     private fun startDiscovery() {
+        if (!P2pJoinPolicy.mayDiscover(active, joined)) return
         val mgr = manager ?: return
         val ch = channel ?: return
         if (lastP2pState == WifiP2pManager.WIFI_P2P_STATE_DISABLED) {
@@ -201,12 +223,13 @@ object GlassP2p {
         val ch = channel ?: return
         val target = offer ?: return
         mgr.requestPeers(ch) { list ->
-            if (!active || connecting) return@requestPeers
-            val devices = list?.deviceList.orEmpty()
-            Log.i(TAG, "peers n=${devices.size} ${devices.joinToString { "${it.deviceName}/${it.deviceAddress}" }}")
-            val match = devices.firstOrNull { matches(it, target) }
-            if (match != null) {
-                connect(match.deviceAddress)
+            if (P2pJoinPolicy.mayConnect(active, joined, connecting)) {
+                val devices = list?.deviceList.orEmpty()
+                Log.i(TAG, "peers n=${devices.size} ${devices.joinToString { "${it.deviceName}/${it.deviceAddress}" }}")
+                val match = devices.firstOrNull { matches(it, target) }
+                if (match != null) {
+                    connect(match.deviceAddress)
+                }
             }
         }
     }
@@ -224,7 +247,7 @@ object GlassP2p {
     }
 
     private fun connect(address: String) {
-        if (connecting || !active) return
+        if (!P2pJoinPolicy.mayConnect(active, joined, connecting)) return
         val mgr = manager ?: return
         val ch = channel ?: return
         connecting = true
@@ -237,6 +260,8 @@ object GlassP2p {
         mgr.connect(ch, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
                 Log.i(TAG, "connect issued")
+                main.removeCallbacks(connectWatch)
+                main.postDelayed(connectWatch, 8_000)
             }
             override fun onFailure(reason: Int) {
                 connecting = false
@@ -245,21 +270,40 @@ object GlassP2p {
         })
     }
 
+    private fun checkJoinedIp() {
+        if (!active || joined) return
+        val ready = P2pJoinPolicy.readyIp(true, false, ipv4OnP2p())
+        if (ready != null) succeed(ready)
+    }
+
     private fun succeed(ip: String) {
-        if (!active) return
+        if (!active || joined) return
+        joined = true
+        connecting = false
         main.removeCallbacks(timeout)
         main.removeCallbacks(retryDiscover)
-        send?.invoke(NavProtocol.CMD_P2P_READY, NavProtocol.p2pReadyJson(ip))
+        main.removeCallbacks(connectWatch)
+        val mgr = manager
+        val ch = channel
+        if (mgr != null && ch != null) {
+            try {
+                mgr.stopPeerDiscovery(ch, null)
+            } catch (_: Exception) {
+            }
+        }
+        val attempt = offer?.attemptId.orEmpty()
+        send?.invoke(NavProtocol.CMD_P2P_READY, NavProtocol.p2pReadyJson(ip, attempt))
         active = false
-        connecting = false
         reclaimHud()
+        Log.i(TAG, "p2p ready ip=$ip attempt=$attempt")
     }
 
     private fun fail(message: String) {
         if (!active && send == null) return
+        val attempt = offer?.attemptId.orEmpty()
         val cb = send
         stopInternal(notify = true)
-        cb?.invoke(NavProtocol.CMD_P2P_FAIL, message)
+        cb?.invoke(NavProtocol.CMD_P2P_FAIL, NavProtocol.p2pFailJson(message, attempt))
     }
 
     private fun reclaimHud() {
@@ -306,18 +350,14 @@ object GlassP2p {
     private fun ipv4OnP2p(): String {
         return try {
             NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
-                .filter { it.name.startsWith("p2p") || it.name.startsWith("wlan") }
+                .filter { it.name.startsWith("p2p") }
                 .flatMap { it.inetAddresses.toList() }
                 .mapNotNull { it.hostAddress }
-                .firstOrNull { it.startsWith("192.168.49.") }
+                .firstOrNull { it.startsWith(P2pJoinPolicy.DIRECT_PREFIX) }
                 .orEmpty()
         } catch (_: Exception) {
             ""
         }
-    }
-
-    private fun guessClientIp(goIp: String): String {
-        return if (goIp.startsWith("192.168.49.")) "192.168.49.2" else ""
     }
 
     private const val TAG = "GlassP2p"

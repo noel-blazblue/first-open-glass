@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.glass.dining.shared.link.P2pJoinPolicy
 import com.glass.dining.shared.nav.P2pOffer
 import java.net.NetworkInterface
 
@@ -21,6 +22,12 @@ import java.net.NetworkInterface
  */
 object PhoneP2p {
     @Volatile var active: Boolean = false
+        private set
+
+    @Volatile var lastOffer: P2pOffer? = null
+        private set
+
+    @Volatile var attemptId: String = ""
         private set
 
     var onStatus: ((String) -> Unit)? = null
@@ -37,7 +44,29 @@ object PhoneP2p {
     @Volatile private var creating: Boolean = false
 
     private val giveUp = Runnable {
-        fail("手机 8s 没建起 Direct 组。请打开手机 Wi-Fi 开关（不用连路由器）")
+        fail("手机 20s 没建起 Direct 组。请打开手机 Wi-Fi 开关（不用连路由器）")
+    }
+
+    private val advertise = object : Runnable {
+        override fun run() {
+            if (!active) return
+            advertiseGroup()
+            main.postDelayed(this, 8_000)
+        }
+    }
+
+    private val retryCreate = Runnable {
+        if (!active || lastOffer != null) return@Runnable
+        creating = false
+        createOrReuseGroup()
+    }
+
+    private val pollGroup = object : Runnable {
+        override fun run() {
+            if (!active || lastOffer != null) return
+            requestGroupOnce()
+            main.postDelayed(this, 1_000)
+        }
     }
 
     private val receiver = object : BroadcastReceiver() {
@@ -72,15 +101,31 @@ object PhoneP2p {
         }
     }
 
-    fun start(context: Context, onGroup: (P2pOffer?) -> Unit) {
+    fun start(context: Context, attemptId: String, onGroup: (P2pOffer?) -> Unit) {
+        val existing = lastOffer
+        if (active && this.attemptId == attemptId && existing != null) {
+            waitingGroup = null
+            onGroup(existing)
+            return
+        }
+        if (active && this.attemptId == attemptId) {
+            waitingGroup = onGroup
+            return
+        }
         val appContext = context.applicationContext
         app = appContext
         waitingGroup = onGroup
+        this.attemptId = attemptId
         active = true
         createAttempts = 0
         creating = false
+        lastOffer = null
         main.removeCallbacks(giveUp)
-        main.postDelayed(giveUp, 8_000)
+        main.removeCallbacks(advertise)
+        main.removeCallbacks(retryCreate)
+        main.removeCallbacks(pollGroup)
+        main.postDelayed(giveUp, 20_000)
+        main.post(pollGroup)
         main.post {
             try {
                 val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -102,7 +147,12 @@ object PhoneP2p {
         active = false
         waitingGroup = null
         creating = false
+        lastOffer = null
+        attemptId = ""
         main.removeCallbacks(giveUp)
+        main.removeCallbacks(advertise)
+        main.removeCallbacks(retryCreate)
+        main.removeCallbacks(pollGroup)
         val mgr = manager
         val ch = channel
         if (mgr != null && ch != null) {
@@ -126,7 +176,15 @@ object PhoneP2p {
     }
 
     private fun createOrReuseGroup() {
-        if (!active || creating) return
+        if (!P2pJoinPolicy.mayCreateGroup(
+                sameAttempt = true,
+                alreadyOffered = lastOffer != null,
+                creating = creating,
+            )
+        ) {
+            return
+        }
+        if (!active) return
         val mgr = manager ?: return fail("没有 WifiP2pManager")
         val ch = channel ?: return fail("P2P channel 为空")
         creating = true
@@ -154,8 +212,9 @@ object PhoneP2p {
                 override fun onFailure(reason: Int) {
                     creating = false
                     Log.w(TAG, "createGroup failed reason=$reason attempt=$createAttempts")
-                    if (reason == WifiP2pManager.BUSY) {
-                        requestGroupOnce()
+                    if (createAttempts < 5) {
+                        status("Direct 组还在建，重试 $createAttempts")
+                        main.postDelayed(retryCreate, 1_500)
                     } else {
                         fail("createGroup 失败 reason=$reason")
                     }
@@ -189,11 +248,23 @@ object PhoneP2p {
         val name = group?.owner?.deviceName.orEmpty().ifBlank { thisName }
         Log.i(TAG, "group ready ssid=$ssid goIp=$ip mac=$mac iface=${group?.`interface`} name=$name")
         status("Direct 组 $ssid")
+        val offer = P2pOffer(
+            ssid = ssid,
+            passphrase = pass,
+            goIp = ip,
+            goMac = mac,
+            goName = name,
+            attemptId = attemptId,
+        )
+        lastOffer = offer
         advertiseGroup()
+        main.removeCallbacks(advertise)
+        main.removeCallbacks(pollGroup)
+        main.post(advertise)
         val cb = waitingGroup
         waitingGroup = null
         main.removeCallbacks(giveUp)
-        cb?.invoke(P2pOffer(ssid = ssid, passphrase = pass, goIp = ip, goMac = mac, goName = name))
+        cb?.invoke(offer)
     }
 
     private fun advertiseGroup() {
@@ -214,6 +285,9 @@ object PhoneP2p {
 
     private fun fail(message: String) {
         main.removeCallbacks(giveUp)
+        main.removeCallbacks(advertise)
+        main.removeCallbacks(retryCreate)
+        main.removeCallbacks(pollGroup)
         status(message)
         val cb = waitingGroup
         waitingGroup = null

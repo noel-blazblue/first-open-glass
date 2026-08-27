@@ -36,8 +36,8 @@ class NavViewModel(app: Application) : AndroidViewModel(app) {
                 NavLinkHost.startIndoorNav(_ui.value.hint)
             }
         }
-        NavLinkHost.onPose = { yaw ->
-            _ui.update { it.copy(yaw = yaw) }
+        NavLinkHost.onPose = { pose ->
+            _ui.update { it.copy(yaw = pose.yaw) }
         }
         NavLinkHost.onFrame = { jpeg ->
             onFrame(jpeg)

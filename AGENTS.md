@@ -28,9 +28,48 @@
 - 人读需求在 `demand.md`。
 - 真机系统版本号不含 `e` 时，不要把企业专有 SDK 硬接到主路径；缺的能力优先用 CustomApp 原生实现。
 
+## 眼镜 APK 安装（硬规则）
+
+`apps/glass-nav` **只能**通过电脑 ADB 直装，禁止任何手机/CXR 中转。
+
+- 命令：`adb -s <RG_glasses serial> install -r ...`，或 `./gradlew :apps:glass-nav:installGlassAdb`。
+- 安装前必须 `adb devices -l`。眼镜未出现、或 `model:RG_glasses` 匹配不到 / 匹配到多台时 **立即停止并报告**，禁止改走手机、`CXRLink.appUploadAndInstall`、把 APK 推进手机目录再上传。
+- 手机和眼镜按 `model` / serial 分别校验后再装：手机 `installDebug` 必须设 `ANDROID_SERIAL`（AGP 否则会装到所有设备，包括眼镜），眼镜用 `GLASS_SERIAL` 或唯一 `model:RG_glasses`。禁止依赖默认 adb 设备。
+- `apps/phone:installDebug` 只装手机包并同步手机 `.env`，不再构建或推送眼镜 APK。
+
+## 连接问题
+
+不要说「眼镜连不上」。先按 [`docs/glass-connection-troubleshooting.md`](docs/glass-connection-troubleshooting.md) 判定是哪一条链路（电脑 ADB / CXR 蓝牙 / 眼镜 Wi-Fi / Wi-Fi Direct / WebRTC），再改代码。闭环后同步更新该文档和 `.cursor/skills/glass-dev/lessons.md`。
+
+## 代码编写准则
+
+写新代码、改旧代码都按这个尺度；宁可先拆模块，也不要继续往大文件里堆。
+
+### 体量
+
+- **单文件目标 ≤ 400 行**（含空行与 import）。到 **500 行必须拆**，禁止在已超限的文件上继续加职责。
+- 单个函数目标 ≤ 80 行；超过就抽私有函数或独立类型。
+- ViewModel / Activity / `*Host` 只做编排与生命周期，不塞领域算法、协议解析、HUD 排版。
+- 现有超限文件（例如 `DiningViewModel`）改功能时顺手拆出一块，不要再加厚。
+
+### 模块抽象
+
+- **一个文件一个主职责**。按领域分包，不按技术层乱堆：`nav/`、`vision/`、`hud/`、`engine/`、`catalog/`。
+- 纯逻辑（匹配、规划、协议、HUD 数据结构）放 `shared`；Android 系统能力（GPS、相机、CXR、TTS）放对应 `apps/*`。
+- 新能力优先新类型 + 新文件，再由现有编排类调用。不要把导航、视觉、LLM、语音塞进同一个 class。
+- 抽取边界是「能单独理解、单独测」：输入输出清晰。不要为了行数把紧密耦合的 20 行拆成一堆单行文件，也不要建 `Utils.kt` 垃圾桶。
+- 协议字段、数据模型改动落在 `shared` / `nav-api`，两端一起改，禁止在手机或眼镜端私自加平行字段。
+
+### 实现习惯
+
+- 先读调用链再改，复用已有抽象；禁止复制一份「差不多」的实现。
+- 禁止 mock 业务数据。测试用固定输入断言纯函数，不要在主路径里塞假店、假 GPS。
+- 新增可测逻辑时补单元测试，放在对应模块的 `src/test`。
+
 ## 典型流程
 
 1. 手机已装乐奇并连上这副眼镜。
 2. 连接失败先查 `lessons.md`（双回调、token、乐奇版本），再改代码。
 3. 改动 `apps/phone` 代码后，必须安装到手机上。
-4. 这是生产级别的应用，禁止 mock 数据。
+4. 改动 `apps/glass-nav` 后，必须用 `installGlassAdb` 直装到眼镜，禁止用手机更新眼镜包。
+5. 这是生产级别的应用，禁止 mock 数据。

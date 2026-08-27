@@ -9,7 +9,7 @@ import com.glass.dining.shared.nav.NavProtocol
 import com.rokid.cxr.CXRServiceBridge
 import com.rokid.cxr.Caps
 
-class NavBridge(
+    class NavBridge(
     private val onCard: (HudLines) -> Unit,
     private val onHint: (NavHint) -> Unit,
     private val onCamera: (Boolean) -> Unit,
@@ -19,6 +19,7 @@ class NavBridge(
     private val onStatus: (String) -> Unit,
     private val onFrameAck: () -> Unit,
     private val onRtc: (String, String?) -> Unit,
+    private val onPhoneGone: () -> Unit = {},
 ) {
     private val main = Handler(Looper.getMainLooper())
     private val bridge = CXRServiceBridge()
@@ -33,7 +34,10 @@ class NavBridge(
 
         override fun onDisconnected() {
             Log.i(TAG, "cxr-s disconnected")
-            main.post { onStatus("手机断开") }
+            main.post {
+                onStatus("手机断开")
+                onPhoneGone()
+            }
         }
 
         override fun onConnecting(name: String?, extra: String?, type: Int) {
@@ -87,6 +91,7 @@ class NavBridge(
                 NavProtocol.CMD_RTC_ICE,
                 NavProtocol.CMD_P2P_OFFER,
                 NavProtocol.CMD_P2P_STOP,
+                NavProtocol.CMD_WIFI_KEEP,
                 -> main.post { onRtc(cmd, readString(args, 1)) }
             }
         }
@@ -125,10 +130,10 @@ class NavBridge(
         bridge.sendMessage(NavProtocol.CHANNEL_UP, caps)
     }
 
-    fun sendPose(yaw: Float) {
+    fun sendPose(pose: com.glass.dining.shared.nav.NavPose) {
         val caps = Caps()
         caps.write(NavProtocol.CMD_POSE)
-        caps.writeFloat(yaw)
+        caps.write(NavProtocol.poseJson(pose))
         bridge.sendMessage(NavProtocol.CHANNEL_UP, caps)
     }
 

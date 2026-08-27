@@ -58,10 +58,12 @@ class StoreHypothesisTest {
         )
         assertTrue(first.reason, first.score >= StoreHypothesis.THRESHOLD)
         assertTrue(second.reason, second.score >= StoreHypothesis.THRESHOLD)
+        val storeLike = StoreHypothesis.storeLikelihood(width, height, ocr, band = 0.75f)
+        assertTrue("latin junk is not a store storeLike=$storeLike", storeLike < 0.35f)
     }
 
     @Test
-    fun artSignWithoutOcrUsesBand() {
+    fun artSignWithoutOcrIsKeyframeNotStore() {
         val scored = StoreHypothesis.score(
             width = 320,
             height = 180,
@@ -70,6 +72,8 @@ class StoreHypothesisTest {
             prevCenter = null,
         )
         assertTrue(scored.reason, scored.score >= StoreHypothesis.THRESHOLD)
+        val storeLike = StoreHypothesis.storeLikelihood(320, 180, emptyList(), band = 0.82f)
+        assertTrue("storeLike=$storeLike", storeLike < StoreHypothesis.STORE_THRESHOLD)
     }
 
     @Test

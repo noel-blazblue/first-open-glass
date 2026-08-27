@@ -20,6 +20,7 @@ object NavProtocol {
     const val CMD_NAV_START = "nav.start"
     const val CMD_NAV_UPDATE = "nav.update"
     const val CMD_NAV_STOP = "nav.stop"
+    const val CMD_NAV_GUIDE = "nav.guide"
     const val CMD_CALIBRATE = "calibrate"
     const val CMD_FRAME = "frame"
     const val CMD_FRAME_OK = "frame.ok"
@@ -38,6 +39,7 @@ object NavProtocol {
     const val CMD_P2P_READY = "p2p.ready"
     const val CMD_P2P_STOP = "p2p.stop"
     const val CMD_P2P_FAIL = "p2p.fail"
+    const val CMD_WIFI_KEEP = "wifi.keep"
 
     const val PCM_SAMPLE_RATE = 16_000
 
@@ -71,6 +73,10 @@ object NavProtocol {
             .put("text", hint.text)
             .put("storeName", hint.storeName)
             .put("remaining", hint.remaining)
+            .put("mode", hint.mode)
+            .put("headingDeg", hint.headingDeg.toDouble())
+            .put("elevationDeg", hint.elevationDeg.toDouble())
+            .put("stage", hint.stage)
             .toString()
     }
 
@@ -84,9 +90,35 @@ object NavProtocol {
                 text = obj.optString("text"),
                 storeName = obj.optString("storeName"),
                 remaining = obj.optInt("remaining", 0),
+                mode = obj.optString("mode"),
+                headingDeg = obj.optDouble("headingDeg").toFloat(),
+                elevationDeg = obj.optDouble("elevationDeg").toFloat(),
+                stage = obj.optString("stage"),
             )
         } catch (_: Exception) {
             NavHint(text = raw.take(24))
+        }
+    }
+
+    fun poseJson(pose: NavPose): String {
+        return JSONObject()
+            .put("yaw", pose.yaw.toDouble())
+            .put("pitch", pose.pitch.toDouble())
+            .put("roll", pose.roll.toDouble())
+            .toString()
+    }
+
+    fun parsePose(raw: String?): NavPose? {
+        if (raw.isNullOrBlank()) return null
+        return try {
+            val obj = JSONObject(raw)
+            NavPose(
+                yaw = obj.optDouble("yaw").toFloat(),
+                pitch = obj.optDouble("pitch").toFloat(),
+                roll = obj.optDouble("roll").toFloat(),
+            )
+        } catch (_: Exception) {
+            raw.toFloatOrNull()?.let { NavPose(yaw = it) }
         }
     }
 
@@ -119,6 +151,7 @@ object NavProtocol {
             .put("goIp", offer.goIp)
             .put("mac", offer.goMac)
             .put("name", offer.goName)
+            .put("attemptId", offer.attemptId)
             .toString()
     }
 
@@ -137,6 +170,7 @@ object NavProtocol {
                     goIp = obj.optString("goIp"),
                     goMac = obj.optString("mac"),
                     goName = obj.optString("name"),
+                    attemptId = obj.optString("attemptId"),
                 )
             }
         } catch (_: Exception) {
@@ -144,8 +178,11 @@ object NavProtocol {
         }
     }
 
-    fun p2pReadyJson(ip: String): String {
-        return JSONObject().put("ip", ip).toString()
+    fun p2pReadyJson(ip: String, attemptId: String = ""): String {
+        return JSONObject()
+            .put("ip", ip)
+            .put("attemptId", attemptId)
+            .toString()
     }
 
     fun parseP2pReady(raw: String?): String {
@@ -154,6 +191,33 @@ object NavProtocol {
             JSONObject(raw).optString("ip")
         } catch (_: Exception) {
             ""
+        }
+    }
+
+    fun parseP2pAttemptId(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        return try {
+            JSONObject(raw).optString("attemptId")
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    fun p2pFailJson(reason: String, attemptId: String = ""): String {
+        return JSONObject()
+            .put("reason", reason)
+            .put("attemptId", attemptId)
+            .toString()
+    }
+
+    fun parseP2pFail(raw: String?): Pair<String, String> {
+        if (raw.isNullOrBlank()) return "" to ""
+        return try {
+            val obj = JSONObject(raw)
+            val reason = obj.optString("reason").ifBlank { raw }
+            reason to obj.optString("attemptId")
+        } catch (_: Exception) {
+            raw to ""
         }
     }
 
@@ -215,6 +279,10 @@ object NavProtocol {
         turn: String = "",
         meters: Int = 0,
         remaining: Int = 0,
+        mode: String = "",
+        headingDeg: Float = 0f,
+        elevationDeg: Float = 0f,
+        stage: String = "",
     ): String {
         return JSONObject()
             .put("title", title)
@@ -227,6 +295,10 @@ object NavProtocol {
             .put("turn", turn)
             .put("meters", meters)
             .put("remaining", remaining)
+            .put("mode", mode)
+            .put("headingDeg", headingDeg.toDouble())
+            .put("elevationDeg", elevationDeg.toDouble())
+            .put("stage", stage)
             .toString()
     }
 
@@ -249,6 +321,10 @@ object NavProtocol {
                 turn = obj.optString("turn"),
                 meters = obj.optInt("meters", 0),
                 remaining = obj.optInt("remaining", 0),
+                mode = obj.optString("mode"),
+                headingDeg = obj.optDouble("headingDeg").toFloat(),
+                elevationDeg = obj.optDouble("elevationDeg").toFloat(),
+                stage = obj.optString("stage"),
             )
         } catch (_: Exception) {
             HudLines(speech = raw.take(24), layout = LAYOUT_TALK)
@@ -284,6 +360,7 @@ data class P2pOffer(
     val goIp: String = "",
     val goMac: String = "",
     val goName: String = "",
+    val attemptId: String = "",
 )
 
 data class NavHint(
@@ -292,6 +369,19 @@ data class NavHint(
     val text: String = "跟着走",
     val storeName: String = "",
     val remaining: Int = 0,
+    val mode: String = "",
+    val headingDeg: Float = 0f,
+    val elevationDeg: Float = 0f,
+    val stage: String = "",
+) {
+    val visual: Boolean
+        get() = mode.isNotBlank()
+}
+
+data class NavPose(
+    val yaw: Float = 0f,
+    val pitch: Float = 0f,
+    val roll: Float = 0f,
 )
 
 data class HudLines(
@@ -305,13 +395,49 @@ data class HudLines(
     val turn: String = "",
     val meters: Int = 0,
     val remaining: Int = 0,
+    val mode: String = "",
+    val headingDeg: Float = 0f,
+    val elevationDeg: Float = 0f,
+    val stage: String = "",
 ) {
     val isTalk: Boolean
         get() = layout == NavProtocol.LAYOUT_TALK
     val isNav: Boolean
         get() = layout == NavProtocol.LAYOUT_NAV || skill == NavProtocol.SKILL_NAV
+    val visual: Boolean
+        get() = isNav && mode.isNotBlank()
 
     companion object {
         fun idle(): HudLines = HudLines()
+
+        fun fromHint(hint: NavHint): HudLines {
+            val turnLabel = when (hint.turn) {
+                "left" -> "左转"
+                "right" -> "右转"
+                "arrive" -> "到了"
+                else -> "直行"
+            }
+            val meta = if (hint.turn == "arrive" || hint.meters <= 0) {
+                turnLabel
+            } else {
+                "$turnLabel ${hint.meters}米"
+            }
+            return HudLines(
+                title = "去${hint.storeName.ifBlank { "目的店" }}".take(16),
+                meta = meta,
+                wait = hint.text.ifBlank { "跟着走" }.take(16),
+                extra = if (hint.turn == "arrive") "可以说取消" else if (hint.remaining > 0) "剩余${hint.remaining}米" else "",
+                skill = NavProtocol.SKILL_NAV,
+                layout = NavProtocol.LAYOUT_NAV,
+                speech = "",
+                turn = hint.turn,
+                meters = hint.meters,
+                remaining = hint.remaining,
+                mode = hint.mode,
+                headingDeg = hint.headingDeg,
+                elevationDeg = hint.elevationDeg,
+                stage = hint.stage,
+            )
+        }
     }
 }

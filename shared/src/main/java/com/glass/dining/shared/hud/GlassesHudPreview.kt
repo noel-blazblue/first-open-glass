@@ -112,7 +112,11 @@ private fun NavPreview(card: HudCard, modifier: Modifier = Modifier) {
                 .padding(top = 4.dp)
                 .size(72.dp),
         ) {
-            drawTurn(card.turn)
+            if (card.visual && card.mode != "arrive" && card.turn != "arrive") {
+                drawVisual(card)
+            } else {
+                drawTurn(card.turn)
+            }
         }
         PreviewLine(meters, 28, FontWeight.Bold)
         if (card.wait.isNotBlank() && card.turn != "arrive") {
@@ -121,6 +125,35 @@ private fun NavPreview(card: HudCard, modifier: Modifier = Modifier) {
         if (remain.isNotBlank()) {
             PreviewLine(remain, 12, FontWeight.Normal)
         }
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawVisual(card: HudCard) {
+    val color = HudColors.green
+    val cx = size.width / 2f
+    if (card.mode == "elevator" || card.mode == "stairs" || card.mode == "corridor" || card.mode == "exit") {
+        val x = (cx + (card.headingDeg / 15f) * size.width * 0.28f).coerceIn(size.width * 0.2f, size.width * 0.8f)
+        val y = size.height * 0.42f
+        val s = size.minDimension * 0.22f
+        val p = Path().apply {
+            moveTo(x, y - s)
+            lineTo(x - s * 0.62f, y + s * 0.38f)
+            lineTo(x + s * 0.62f, y + s * 0.38f)
+            close()
+        }
+        drawPath(p, color)
+        return
+    }
+    val distances = listOf(0.28f, 0.48f, 0.68f)
+    distances.forEach { t ->
+        val y = size.height * t
+        val half = size.width * (0.38f - t * 0.18f)
+        val p = Path().apply {
+            moveTo(cx - half, y + 8f)
+            lineTo(cx, y - 10f)
+            lineTo(cx + half, y + 8f)
+        }
+        drawPath(p, color, style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 

@@ -24,6 +24,8 @@ object PhoneTts {
     @Volatile private var pending: String? = null
     @Volatile var speaking: Boolean = false
         private set
+    @Volatile var spokenText: String = ""
+        private set
     var onIdle: (() -> Unit)? = null
     @Volatile private var activeId: String = ""
     private var seq: Int = 0
@@ -82,6 +84,7 @@ object PhoneTts {
     private fun enqueue(text: String, flush: Boolean) {
         val spoken = text.trim()
         if (spoken.isBlank()) return
+        spokenText = if (flush) spoken else spokenText + spoken
         if (NlsClient.ready) {
             enqueueCloud(spoken, flush)
             return

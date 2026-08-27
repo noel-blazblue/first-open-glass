@@ -1,5 +1,7 @@
 package com.glass.dining.shared.engine
 
+import com.glass.dining.shared.agent.PlaceRef
+import com.glass.dining.shared.agent.PlaceResolver
 import com.glass.dining.shared.catalog.MemoryStoreCatalog
 import com.glass.dining.shared.catalog.StoreCatalog
 import com.glass.dining.shared.catalog.StoreCatalogIds
@@ -105,6 +107,11 @@ class DiningMatcher(
 
     companion object {
         fun summaryTts(store: Store): String {
+            if (!store.catalogBacked) {
+                val addr = store.address.ifBlank { "" }
+                val dist = if (store.distanceMeters > 0) "大约${store.distanceMeters}米。" else ""
+                return "${store.shortName}。$addr$dist".trim()
+            }
             val rating = if (store.rating > 0) ratingSpeech(store.rating) + "，" else ""
             val wait = if (!store.openNow) {
                 "现在已经打烊"
@@ -152,7 +159,7 @@ class QaEngine {
         )
     }
 
-    fun detectIntent(question: String): String {
+    private fun detectIntent(question: String): String {
         val q = question.trim()
         return when {
             q.contains("人均") || q.contains("多少钱") || q.contains("贵不") -> "人均"
@@ -171,6 +178,9 @@ class QaEngine {
     }
 
     private fun answerOf(store: Store, intent: String): String {
+        if (!store.catalogBacked && intent in setOf("人均", "排队", "团购", "包间", "招牌")) {
+            return "${store.shortName}是公开地点，没有排队、人均和优惠数据。"
+        }
         return when (intent) {
             "人均" -> if (store.avgPrice > 0) "${store.shortName}人均大约${store.avgPrice}元。" else "${store.shortName}还没录入人均。"
             "排队" -> if (!store.openNow) {
@@ -253,6 +263,15 @@ class DiningSession(
                 ) ?: refreshed
             }
         }
+    }
+
+    fun bindPlace(place: PlaceRef): MatchResult {
+        val result = PlaceResolver.matchResult(place)
+        lastMatch = result
+        if (activeSkill != ActiveSkill.NAV) {
+            activeSkill = ActiveSkill.BROWSE
+        }
+        return result
     }
 
     fun look(

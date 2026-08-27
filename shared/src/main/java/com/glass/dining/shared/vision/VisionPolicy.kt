@@ -31,6 +31,7 @@ data class QualityReport(
     val brightness: Float = 0f,
     val sharpness: Double = 0.0,
     val duplicate: Boolean = false,
+    val visualGrid: IntArray = IntArray(0),
 )
 
 data class OcrBlock(
@@ -410,17 +411,25 @@ object ImageQuality {
     }
 
     fun fingerprint(width: Int, height: Int, gray: ByteArray): Long {
-        val size = 16
+        val grid = visualGrid(width, height, gray)
         var hash = 0L
-        for (y in 0 until size) {
-            for (x in 0 until size) {
-                val sx = (x * width / size).coerceAtMost(width - 1)
-                val sy = (y * height / size).coerceAtMost(height - 1)
-                val v = gray[sy * width + sx].toInt() and 0xff
-                hash = (hash * 33) xor v.toLong()
-            }
+        for (v in grid) {
+            hash = (hash * 33) xor v.toLong()
         }
         return hash
+    }
+
+    fun visualGrid(width: Int, height: Int, gray: ByteArray, size: Int = 16): IntArray {
+        if (width <= 0 || height <= 0 || gray.size < width * height) return IntArray(0)
+        val out = IntArray(size * size)
+        for (y in 0 until size) {
+            val sy = (y * height / size).coerceAtMost(height - 1)
+            for (x in 0 until size) {
+                val sx = (x * width / size).coerceAtMost(width - 1)
+                out[y * size + x] = gray[sy * width + sx].toInt() and 0xff
+            }
+        }
+        return out
     }
 
     fun downsampleGray(srcW: Int, srcH: Int, argb: IntArray, dstW: Int, dstH: Int): ByteArray {

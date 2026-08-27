@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.glass.dining.shared.agent.EchoFilter
 import org.json.JSONObject
 import org.vosk.LibVosk
 import org.vosk.LogLevel
@@ -35,7 +36,7 @@ object GlassAsr {
     @Volatile var muted: Boolean = false
 
     fun holdForTts() {
-        muted = true
+        // TTS 期间继续收听。回声靠 EchoFilter，不要 mute。
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -128,7 +129,7 @@ object GlassAsr {
             var pending = ByteArray(0)
             while (running.get()) {
                 val chunk = incoming.poll(80, TimeUnit.MILLISECONDS) ?: continue
-                if (muted || PhoneTts.speaking) {
+                if (muted) {
                     if (inSpeech) {
                         inSpeech = false
                         rec.reset()
@@ -166,6 +167,7 @@ object GlassAsr {
                     bestPartial = partial
                     lastPartialAt = now
                 }
+                maybeBarge(partial)
                 if (level >= holdThr) {
                     lastVoiceAt = now
                 }
@@ -180,13 +182,7 @@ object GlassAsr {
                 Log.i(TAG, "glass asr text=$text quiet=${now - lastVoiceAt}ms")
                 inSpeech = false
                 bestPartial = ""
-                if (text.isNotBlank()) {
-                    muted = true
-                    main.post {
-                        onEndpoint?.invoke()
-                        onUtterance?.invoke(text)
-                    }
-                }
+                emitUtterance(text)
             }
         } catch (error: Exception) {
             Log.w(TAG, "glass asr failed", error)
@@ -211,7 +207,7 @@ object GlassAsr {
             var pcmBytes = 0
             while (running.get()) {
                 val chunk = incoming.poll(80, TimeUnit.MILLISECONDS) ?: continue
-                if (muted || PhoneTts.speaking) {
+                if (muted) {
                     if (inSpeech) {
                         inSpeech = false
                         pcm.clear()
@@ -251,14 +247,11 @@ object GlassAsr {
                 pcm.clear()
                 pcmBytes = 0
                 inSpeech = false
-                muted = true
-                main.post { onEndpoint?.invoke() }
                 val text = NlsClient.recognize(audio).orEmpty()
                 Log.i(TAG, "glass asr nls text=$text quiet=${now - lastVoiceAt}ms bytes=${audio.size}")
                 if (text.isNotBlank()) {
-                    main.post { onUtterance?.invoke(text) }
+                    emitUtterance(text)
                 } else {
-                    muted = false
                     main.post { onPartial?.invoke("") }
                 }
             }
@@ -268,6 +261,26 @@ object GlassAsr {
         } finally {
             running.set(false)
             Log.i(TAG, "glass asr nls stopped")
+        }
+    }
+
+    private fun maybeBarge(partial: String) {
+        if (!PhoneTts.speaking) return
+        if (!EchoFilter.isUserPartial(partial, PhoneTts.spokenText)) return
+        Log.i(TAG, "barge partial=$partial")
+        main.post { PhoneTts.stop() }
+    }
+
+    private fun emitUtterance(text: String) {
+        if (text.isBlank()) return
+        if (EchoFilter.isEcho(text, PhoneTts.spokenText)) {
+            Log.i(TAG, "echo ignored $text")
+            return
+        }
+        muted = true
+        main.post {
+            onEndpoint?.invoke()
+            onUtterance?.invoke(text)
         }
     }
 

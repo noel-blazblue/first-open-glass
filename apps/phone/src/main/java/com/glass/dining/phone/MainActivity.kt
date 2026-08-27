@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import com.glass.dining.phone.nav.PhoneGps
 
 class MainActivity : ComponentActivity() {
     private val viewModel: DiningViewModel by viewModels()
@@ -45,22 +46,44 @@ class MainActivity : ComponentActivity() {
         }
         requestNeededPermissions()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (intent.getBooleanExtra("stop_glass", false)) {
+            CxrLinkHost.closeGlassWhenReady = true
+        }
         setContent {
             PhoneDiningScreen(viewModel)
         }
         viewModel.setStatus(CxrAuth.start(this))
-        intent.getStringExtra("ask")?.let { viewModel.onHeard(it) }
+        if (intent.getBooleanExtra("stop_glass", false)) {
+            viewModel.setStatus("正在关掉镜片到餐页…")
+        }
+        applyExtras(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        applyExtras(intent)
+    }
+
+    private fun applyExtras(intent: Intent) {
+        if (intent.getBooleanExtra("rtc_stop", false)) {
+            viewModel.stopVisionLink()
+        }
+        if (intent.getBooleanExtra("rtc_start", false)) {
+            viewModel.startVisionLink()
+        }
         intent.getStringExtra("ask")?.let { viewModel.onHeard(it) }
     }
 
     override fun onResume() {
         super.onResume()
+        PhoneGps.start(this)
         viewModel.reloadCatalog()
+    }
+
+    override fun onPause() {
+        PhoneGps.stop()
+        super.onPause()
     }
 
     @Deprecated("Deprecated in Java")

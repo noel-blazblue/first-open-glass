@@ -1,3 +1,107 @@
+## 2026-08-27 — 转头看楼层再转回电脑，问几楼会丢，是运动中立刻抽帧
+
+- 场景：看电脑 → 转头看楼层标识停留 → 转回电脑 → 问「我在几楼」→ AI 说眼前是显示器、看不到楼层。
+- 误判：画面没变化所以没触发；OCR「7F」应直接当事实；把层号写进场景正文再正则抠。
+- 根因：相邻帧差大时立刻把转头模糊帧送给 VLM；视线在标识上稳定后相邻差变小反而不触发。单个 pending 还会被转回电脑的帧覆盖。层号藏在 `currentBrief` 里，下一帧电脑场景会冲掉。
+- 以后先做：`EnvironmentProbe` 走 Stable / Transition / Settling。新视野连续约 1.5s 内部相似且不同于上一锚点才提交 episode。VLM 忙时 episode 入队，不覆盖。`currentBrief` 只表示当前视野；楼层进 `recentObservations.floor_sign`。问几楼：用户确认 > 可靠标识 > 未知。看 log `transition_start` / `settled` / `episode_queued` / `episode_committed` / `fact_promoted`。
+- 不要做：运动中立刻 `envLook`；用最新帧覆盖未处理的稳定视野；从通用场景散文正则抠层号；用转回后的电脑画面覆盖刚才的楼层证据。
+
+## 2026-08-27 — 导航时也能聊天：镜片箭头用本地 IMU，不要用 CXR 高频姿态
+
+- 场景：边导航边问 AI。姿态如果还走蓝牙，PCM 仍会被挤掉。
+- 误判：导航必须把朝向每秒 10 次发给手机，否则箭头不准。
+- 根因：镜片 HUD 已经在本地读 IMU（`hud.pitchDeg = imu.pitchDegrees`）。箭头的左右来自手机下发的导航卡片，不靠 `pose` 通道。
+- 以后先做：麦开着时不发 pose。导航且没在说话时，朝向变超过约 12° 才最多 1 秒发一次。看 log 应持续有 `pcm n=`。
+- 不要做：把「导航中」当成可以 10Hz 发 pose 的理由。
+
+## 2026-08-27 — 眼镜姿态 10Hz 占满 CXR，说话没有 PCM，AI 就不回答
+
+- 场景：对着眼镜说话，手机没有识别、AI 没有回复。log 全是 `cmd=pose`，看不到 `pcm n=`。
+- 误判：ASR 坏了；模型没配；麦克风权限没了。
+- 根因：为环境感知把 `sendPose` 改成一直 100ms 一次。CXR 自定义通道被姿态占满，眼镜麦的 PCM 过不来，`GlassAsr` 收不到声音。
+- 以后先做：姿态只在导航时发。环境记忆靠画面差异，不要用 10Hz IMU 抢语音通道。看 log 应有周期性 `pcm n=`，说话后有 utterance。
+- 不要做：把 pose 当常驻心跳；在 CXR 上高频发非语音数据。
+
+## 2026-08-27 — 「眼镜 Wi-Fi 关着，正在打开」会卡很久，是 App 自己没打开
+
+- 场景：开视频后手机/镜片反复显示「眼镜 Wi-Fi 关着，正在打开」，停很久也不进 Direct。
+- 误判：只能在电脑上 `svc wifi enable`；或固件关了就永远打不开。
+- 根因：眼镜 APK `targetSdk 34` 时 `WifiManager.setWifiEnabled` 被系统直接拒绝。旧逻辑每 0.8s 在 ENABLING 时再打一次 enable，状态机转不完。`isWifiEnabled==true` 还被 `wifi_on` 设置位否决。STA 每 2.5s、手机每 12s 重发 offer 又把同一句 RTC_STAT 刷到手机上。
+- 以后先做：眼镜 CustomApp `targetSdk 28`，进程启动就 `GlassWifi.hold()`，用 `setWifiEnabled(true)` 打开。ENABLING 时等待，不要重入。同一 Direct SSID 不要重启 STA。同一句进度只报一次。看 log `setWifiEnabled=` / `wifi keep state=`。
+- 不要做：让助手用 ADB 手动开眼镜 Wi-Fi；把「正在打开」当失败文案刷屏；ENABLING 时再 `svc wifi enable`。
+
+## 2026-08-27 — 环境记忆用画面变化触发 VLM 中文场景，OCR 只做探针
+
+- 场景：用户走进无字房间、有人靠近，或问「眼前是什么 / 刚才发生了什么」，AI 没有通用场景记忆。
+- 误判：OCR 看到「7层」就够当环境事实；环境模型应该按导航楼层 JSON 来建。
+- 根因：旧路径把 OCR 楼层写进 `EnvironmentStore`。画面结构变化没有作为主探针，VLM 也不写给下一轮对话用的中文场景。
+- 以后先做：`visualGrid` 为主、OCR 为辅，经 `EnvironmentProbe` 打分。最近 3 帧里至少 2 帧中高分才触发。后台 VLM ≥8s、每分钟 ≤6 次；静止不刷，持续移动约 30s 兜底。`PhoneAi.envLook` 纯文本写入 `currentBrief` + `recentChanges`，下一轮注入 `【当前环境】`。用户口述进 `userFacts`。失败保留上一份正文。
+- 不要做：`EnvironmentMerge.fromOcr` 写楼层事实；把环境记忆做成导航专用 JSON；每帧打 VLM；JPEG 进对话历史。
+
+## 2026-08-27 — TTS 期间要能插话，但不能用 RMS 抢话
+
+- 场景：AI 正在回复，用户继续提问，系统不听、也停不下来。
+- 误判：眼镜麦关了；或该用音量阈值 barge-in。
+- 根因：旧逻辑 TTS 时 `GlassAsr.muted=true`，且 `onHeard` 在 `asking` 时直接丢掉。眼镜麦会把手机喇叭听回去，RMS 会自己打断自己。
+- 以后先做：TTS/思考中继续识别。`EchoFilter` 丢掉和播报重叠的回声。新用户句用 `TalkTurn.seq` 取消旧 Agent 并 `PhoneTts.stop()`。partial 出现不像回声的汉字再停 TTS。看 log `echo ignored` / `barge partial`。
+- 不要做：TTS 期间 mute 麦；用 RMS 阈值抢话；过期轮的 `onStreamDelta` 继续开口。
+
+## 2026-08-27 — 楼层不要再用 OCR 写成环境事实
+
+- 场景：眼前有 7 楼标识，随后问几楼。
+- 误判：OCR「7F」应直接晋升为环境事实。
+- 根因：OCR 会抖、会看错，且写不出物体/人物/空间关系。导航 `LandmarkPlanner` 仍可消费 OCR，但不能定义通用环境模型。
+- 以后先做：画面变化触发 VLM 写中文场景；口述「我在 7 楼」进 `userFacts`。导航楼层优先【用户确认】，其次从场景正文读取。看 log `env vlm start` / `env vlm ok`。
+- 不要做：`fromOcr` 写 `floorFact`；空帧清掉已有 `currentBrief`。
+
+## 2026-08-27 — 眼镜 CustomApp 进程一启动就开 Wi-Fi
+
+- 场景：用户问眼镜 App 打开时能否自动开 Wi-Fi。USB 插着时固件仍会把 `wifi_on` 置 0。
+- 误判：只能等 `p2p.offer` 或手动开；`setWifiEnabled` 在 targetSdk 34 上一定够用。
+- 根因：Android Q 之后普通应用开 Wi-Fi 常被拦。`GlassWifi.hold()` 必须在 `Application.onCreate` 就跑，并用 `svc wifi enable` / `settings put global wifi_on 1`。`WRITE_SECURE_SETTINGS` 要用眼镜 ADB `pm grant`。
+- 以后先做：`GlassApp` 启动即 `hold()`，Activity 不要 `release()`。装完 APK 后 `pm grant com.glass.nav.glass android.permission.WRITE_SECURE_SETTINGS`。看 log `wifi hold start` / `setWifiEnabled` / `svc wifi enable`。
+- 不要做：等导航或开流才开 Wi-Fi；为开 Wi-Fi 拔 USB；Activity `onDestroy` 停掉保活。
+
+## 2026-08-27 — USB 插着时眼镜 Wi-Fi 会被固件关掉，Direct 必挂
+
+- 场景：视频反复连不上，用户发现眼镜 Wi-Fi 关了。
+- 误判：Direct 协议不稳；要拔 USB 才能开 Wi-Fi。
+- 根因：USB 调试连上后固件常把 `wifi_on` 置 0。RTP / Direct 都走 Wi-Fi，关了就永远加不进组。旧逻辑只在 `p2p.offer` 时 `setWifiEnabled` 一次，失败就放弃；手机 12s 重发 offer 还会把正在加入的流程掐掉。
+- 以后先做：CustomApp 一到前台就 `GlassWifi.hold()`，`setWifiEnabled` + `svc wifi enable`，被关了再打开。同一 SSID 的 offer 不要 `stopInternal`。USB 留着，不要拔。
+- 不要做：把关 Wi-Fi 当成用户操作；等导航/开流才去开 Wi-Fi；为开 Wi-Fi 拔数据线。
+
+## 2026-08-27 — 到餐 CustomApp 全屏黑底占住镜片，关掉手机 App 也不退
+
+- 场景：没开到餐 App，镜片系统 UI 完全不显示，像光机坏了。
+- 误判：光机死了；USB 把显示踢掉了。
+- 根因：CXR 会话类型 `CUSTOMAPP` 会把 `com.glass.nav.glass` 拉到前台，主题是全屏黑底。手机 App 被杀掉时没调 `appStop`，眼镜页继续占着合成器。USB 仍枚举但眼镜 `adb` 经常握手断，没法 `force-stop`。
+- 以后先做：退出到餐时 `appStop`。眼镜收到手机断开就 `finishAndRemoveTask`。现场恢复：`am start ... --ez stop_glass true`，或眼镜 ADB 通了之后 `am force-stop com.glass.nav.glass` 再 `KEYCODE_WAKEUP`。不要拔 USB。
+- 不要做：把「镜片全黑」先当成硬件坏了；为了恢复显示让人拔数据线。
+
+## 2026-08-27 — 手机 Direct 组已建好，眼镜没加入就把画面关了
+
+- 场景：开视频没有画面，提示眼镜没加入 Direct。
+- 误判：手机没建组；CXR 没把 offer 发出去。
+- 根因：手机 GO 约 1s 就 `group ready`（SSID `DIRECT-…`），`p2p.offer` 也发出了。眼镜走 `discoverPeers` + `connect()`，经常看不见已经当 GO 的手机，镜片上也没法点确认框。22s 超时 `abortP2p` 会 `removeGroup`，眼镜这时才连上也会落空。USB 插着时眼镜 `wifi_on=0` 仍是常见前置条件。
+- 以后先做：眼镜用 SSID+口令当普通热点加入（`GlassStaJoin`），发现/connect 只作兜底。手机组建好后周期 `discoverPeers` 并重发 offer，不要第一轮超时就拆组。开画面前看 `PhoneP2p group ready`、`GlassP2p sta joined` / `GlassP2p joined`。`wifi_on=0` 就 `svc wifi enable`，不要拔 USB。
+- 不要做：把 `WifiP2pManager.connect()` 当主路径；22s 没加入就 `removeGroup`；GO 的 MAC 是 `02:00:00:00:00:00` 时还按 MAC 匹配。
+
+## 2026-08-27 — 「导航去海底捞」说没有定位，其实没去取点
+
+- 场景：手机定位已开、`ACCESS_FINE_LOCATION` 已授予，对眼镜说「导航去海底捞」，立刻回复没有定位。
+- 误判：系统定位关了；高德密钥坏了；小米拿不到点。
+- 根因：`resolve_destination` 只看内存里的 `PhoneGps.last`。搜附近才会 `awaitFix`，但 `PlaceResolver` 在 `last==null` 时先返回 `NeedLocation`，根本走不到搜索。`PhoneGps.start()` 以前只在导航前台服务里开，进 App 不预热；`lastKnown` 超过 60 秒被丢掉。真机 log：`agent error name=resolve_destination 需要定位才能找海底捞`，当天 `dumpsys location` 里这个 App 没有新的 location registration。
+- 以后先做：没搜过附近就先 `need_search` / `awaitFix`，不要凭空 `NeedLocation`。App 在前台就 `PhoneGps.start()`。过期 lastKnown 作 fallback。log 看 `resolve dest=`、`gps await`、`searchNearby`。
+- 不要做：把「打开定位」说给已经授权的用户；等导航开始才去听 GPS。
+
+## 2026-08-27 — USB 调试和 Wi-Fi 视频可以同时开
+
+- 场景：家里一直 USB 插着电脑调试，同时开 Wi-Fi Direct 视频。助手把 `adb devices` 变空说成「开 Wi-Fi 把 USB 调试踢掉了」，还让人反复拔插。
+- 误判：开眼镜 Wi-Fi / Direct 会关掉 USB 调试；没画面就要拔数据线。
+- 根因：两件事方向相反。USB 调试连上后固件**常常把眼镜 Wi-Fi 关掉**（`wifi_on=0`），视频 RTP 需要 Wi-Fi，所以要在**数据线仍插着**时 `svc wifi enable`。USB ADB 走线，不走 Wi-Fi；Direct 最多改 STA / **无线** ADB（`IP:5555`），不能当成会拆掉有线 ADB。当天 `adb devices` 空了，USB 仍枚举 Rokid `0x4ee7`，是电脑侧 adbd 握手断了（含误执行 `adb kill-server`），不是 `svc wifi enable` 关了调试。
+- 以后先做：默认 **USB 调试 + Wi-Fi 视频同时开**。`wifi_on=0` 就开 Wi-Fi，不要先让人拔线。`adb devices` 空了先看 USB 是否还在、再重启 adb；不要把「无线 ADB 可能掉」写成「USB 调试被踢」。
+- 不要做：对用户说开 Wi-Fi 会踢掉 USB 调试；把拔数据线当开视频的步骤；用 `adb kill-server` 当常规修复。
+
 ## 2026-08-27 — 屏幕里的店招被 probe 判成不是店
 
 - 场景：对着电脑上的巴奴店招图，抽帧和打分都过了，镜片仍无反应。
@@ -18,9 +122,9 @@
 
 - 场景：USB 还插在眼镜上，手机点开画面，立刻提示「视频流已关」。
 - 误判：WebRTC / 720p 采集把流拉挂了。
-- 根因：手机 Direct 组已经建好。眼镜 `wifi_on=0`（USB 调试会关 Wi-Fi），`setWifiEnabled` 失败后立刻 `P2P_FAIL`。随后 `PhoneRtc.stop()` / `PhoneP2p.stop()` 把失败文案盖成「视频流已关」。
-- 以后先做：关流不要覆盖 abort 原因。眼镜 Wi-Fi 关着时重试到超时，把「请拔 USB / 开 Wi-Fi」显示在手机上。开画面前看 `wifi_on` 和 `GlassP2p wifi was off`。
-- 不要做：把「视频流已关」当采集失败；USB 插着时假定眼镜 Wi-Fi 是开的。
+- 根因：手机 Direct 组已经建好。USB 调试连上后眼镜 `wifi_on=0`（固件常关 Wi-Fi），`setWifiEnabled` 失败后立刻 `P2P_FAIL`。随后 `PhoneRtc.stop()` / `PhoneP2p.stop()` 把失败文案盖成「视频流已关」。
+- 以后先做：关流不要覆盖 abort 原因。Wi-Fi 关着就 **USB 留着、把 Wi-Fi 打开**，不要让人拔线。开画面前看 `wifi_on` 和 `GlassP2p wifi was off`。
+- 不要做：把「视频流已关」当采集失败；USB 插着时假定眼镜 Wi-Fi 是开的；把拔 USB 写成开视频的步骤。
 
 ## 2026-08-26 — 到餐显示 0 家门店，Download 里其实有 glass-stores.json
 
@@ -43,7 +147,7 @@
 - 场景：户外没路由器，想绕开「必须同一局域网」做视频。不走企业 `PSecuritySDK`，问 CustomApp 能不能用 Android 原生 P2P。
 - 误判：消费固件没有 P2P；或 CXR 没有接口就等于眼镜 Wi-Fi Direct 不存在。
 - 根因：固件 `1.24.011`（Android 12）声明了 `android.hardware.wifi.direct`，网卡有 `p2p0`（当前 DOWN）。`dumpsys wifip2p` 是 `P2pDisabledState`，要等 App 调 `WifiP2pManager.initialize()` 才会 ENABLE。属性里有 `persist.p2p.Go.channel=5745`。到餐眼镜 App 还没要 P2P 权限。
-- 以后先做：用原生 `createGroup`（手机当 GO）+ CXR 把 SSID/口令送给眼镜，眼镜当普通 STA 加入 `DIRECT-` 热点，避免 `connect()` 弹窗。出网段后再复用现有 WebRTC。真机先验证会不会把当前 STA/无线 ADB 踢掉。
+- 以后先做：用原生 `createGroup`（手机当 GO）+ CXR 把 SSID/口令送给眼镜，眼镜当普通 STA 加入 `DIRECT-` 热点，避免 `connect()` 弹窗。出网段后再复用现有 WebRTC。Direct 可能让眼镜离开家里路由器，**无线 ADB（`IP:5555`）** 可能掉；**有线 USB ADB 应继续可用**，不要写成会踢掉 USB 调试。
 - 不要做：在消费版接企业 `PSecuritySDK`；用 `discoverPeers` 当主路径（镜片没法点系统确认框）。
 
 ## 2026-08-26 — 眼镜 WebRTC 探针：信令走 CXR，画面走同 Wi-Fi RTP

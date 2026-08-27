@@ -29,10 +29,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.glass.dining.phone.link.LinkUiState
 import com.glass.dining.shared.hud.GlassesHudPreview
 import com.glass.dining.shared.hud.HudColors
 import com.glass.dining.shared.model.Store
@@ -53,6 +55,9 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
     ) {
         Text("到餐 Agent", color = HudColors.green, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(state.status, color = TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+        Spacer(Modifier.height(12.dp))
+        LinkDiagnostics(state.link)
+        Spacer(Modifier.height(12.dp))
         Text(
             "对话是入口。选定门店后，说走、出发就可以导航。没有「开始导航」按钮。",
             color = TextDim,
@@ -68,6 +73,20 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
                 modifier = Modifier.padding(top = 4.dp),
             )
         }
+        Spacer(Modifier.height(12.dp))
+        Text("Agent Context（每轮注入，与连接无关）", color = TextMain, fontSize = 14.sp)
+        Text(
+            state.agentContext.ifBlank { "还没有世界状态。开眼镜画面并说话后会出现。" },
+            color = HudColors.green,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            lineHeight = 15.sp,
+            modifier = Modifier
+                .padding(top = 8.dp)
+                .fillMaxWidth()
+                .background(Panel, RoundedCornerShape(12.dp))
+                .padding(12.dp),
+        )
         Spacer(Modifier.height(12.dp))
         TalkButton(talking = state.talking) { viewModel.toggleTalk() }
         Spacer(Modifier.height(8.dp))
@@ -192,6 +211,49 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
         }
         Spacer(Modifier.height(24.dp))
     }
+}
+
+@Composable
+private fun LinkDiagnostics(link: LinkUiState) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Panel, RoundedCornerShape(12.dp))
+            .padding(12.dp),
+    ) {
+        Text("连接诊断", color = TextMain, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "phase=${link.phase}  attempt=${link.attemptId.ifBlank { "-" }}  ${link.elapsedMs}ms",
+            color = HudColors.green,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        LinkRow("CXR", link.cxr)
+        LinkRow("眼镜 App", link.glassApp)
+        LinkRow("麦克风", link.mic)
+        LinkRow("眼镜 Wi-Fi", link.glassWifi)
+        LinkRow("Direct", link.direct)
+        LinkRow("RTC", link.rtc)
+        if (link.lastError.isNotBlank()) {
+            Text(
+                "上次失败${if (link.failedPhase.isNotBlank()) " @ ${link.failedPhase}" else ""}：${link.lastError}",
+                color = HudColors.warn,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun LinkRow(label: String, value: String) {
+    Text(
+        "$label  $value",
+        color = TextDim,
+        fontSize = 12.sp,
+        modifier = Modifier.padding(top = 4.dp),
+    )
 }
 
 @Composable

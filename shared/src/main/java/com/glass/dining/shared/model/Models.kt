@@ -29,6 +29,9 @@ data class Store(
     val answers: Map<String, String>,
     val lat: Double = 0.0,
     val lng: Double = 0.0,
+    val floor: String = "",
+    val source: String = "catalog",
+    val catalogBacked: Boolean = true,
 )
 
 data class Scene(

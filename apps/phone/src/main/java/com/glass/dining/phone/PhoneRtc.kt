@@ -172,6 +172,7 @@ object PhoneRtc {
         val root = EglBase.create()
         egl = root
         factory = PeerConnectionFactory.builder()
+            .setOptions(p2pRtcOptions())
             .setVideoEncoderFactory(DefaultVideoEncoderFactory(root.eglBaseContext, true, false))
             .setVideoDecoderFactory(DefaultVideoDecoderFactory(root.eglBaseContext))
             .createPeerConnectionFactory()
@@ -295,6 +296,14 @@ object PhoneRtc {
         return PeerConnection.RTCConfiguration(iceServers()).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+            tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.DISABLED
+        }
+    }
+
+    private fun p2pRtcOptions(): PeerConnectionFactory.Options {
+        return PeerConnectionFactory.Options().apply {
+            // Direct 的 p2p0 没有 INTERNET 能力，默认 NetworkMonitor 会丢掉 192.168.49/24。
+            disableNetworkMonitor = true
         }
     }
 
@@ -330,6 +339,7 @@ object PhoneRtc {
         }
         override fun onIceCandidate(candidate: IceCandidate?) {
             candidate ?: return
+            Log.i(TAG, "local ice ${candidate.sdp}")
             onSignal?.invoke(
                 NavProtocol.CMD_RTC_ICE,
                 NavProtocol.rtcIceJson(candidate.sdpMid, candidate.sdpMLineIndex, candidate.sdp),

@@ -40,6 +40,7 @@ data class StoreForm(
     val lng: Double = 0.0,
     val openNow: Boolean = true,
     val hasPrivateRoom: Boolean = false,
+    val floor: String = "",
 )
 
 data class StoreUi(
@@ -194,6 +195,7 @@ private fun Store.toForm(): StoreForm {
         lng = lng,
         openNow = openNow,
         hasPrivateRoom = hasPrivateRoom,
+        floor = floor,
     )
 }
 
@@ -222,6 +224,7 @@ private fun StoreForm.toStore(): Store {
         answers = emptyMap(),
         lat = lat,
         lng = lng,
+        floor = floor.trim(),
     )
 }
 

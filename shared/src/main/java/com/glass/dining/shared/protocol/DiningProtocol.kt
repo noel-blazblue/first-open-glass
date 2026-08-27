@@ -134,6 +134,7 @@ private fun storeToJson(store: Store): JSONObject {
         put("hasPrivateRoom", store.hasPrivateRoom)
         put("lat", store.lat)
         put("lng", store.lng)
+        put("floor", store.floor)
         put("tags", JSONArray(store.tags))
         put("signatures", JSONArray(store.signatures))
         put("suitable", JSONArray(store.suitable))
@@ -177,6 +178,7 @@ private fun jsonToStore(obj: JSONObject): Store {
         answers = obj.optJSONObject("answers").toStringMap(),
         lat = obj.optDouble("lat"),
         lng = obj.optDouble("lng"),
+        floor = obj.optString("floor"),
     )
 }
 

@@ -20,6 +20,7 @@ object QualityGate {
         val bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
             ?: return null to QualityReport(ok = false, reason = "不是可显示的照片")
         val gray = toGray(bitmap, SAMPLE_W, SAMPLE_H)
+        val grid = ImageQuality.visualGrid(SAMPLE_W, SAMPLE_H, gray)
         val report = ImageQuality.analyze(SAMPLE_W, SAMPLE_H, gray)
         val hash = ImageQuality.fingerprint(SAMPLE_W, SAMPLE_H, gray)
         val now = System.currentTimeMillis()
@@ -35,9 +36,10 @@ object QualityGate {
                 brightness = report.brightness,
                 sharpness = report.sharpness,
                 duplicate = true,
+                visualGrid = grid,
             )
         }
-        return bitmap to report
+        return bitmap to report.copy(visualGrid = grid)
     }
 
     fun reset() {

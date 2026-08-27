@@ -5,6 +5,7 @@ package com.glass.dining.shared.vision
  * 认店、导航路牌、菜单、券、支付都映射到同一套抽帧 + 路由，而不是各自开相机。
  */
 object VisionSkill {
+    const val LOOK_AT_SCENE = "look_at_scene"
     const val LOOK_STORE = "look_store"
     const val READ_SIGN = "read_sign"
     const val READ_MENU = "read_menu"
@@ -15,7 +16,7 @@ object VisionSkill {
 
     fun intentForTool(name: String): VisionIntent? {
         return when (name) {
-            LOOK_STORE -> VisionIntent.LOOK_STORE
+            LOOK_AT_SCENE, LOOK_STORE -> VisionIntent.LOOK_STORE
             READ_SIGN -> VisionIntent.READ_SIGN
             READ_MENU -> VisionIntent.READ_MENU
             SCAN_COUPON -> VisionIntent.SCAN_COUPON
@@ -24,5 +25,5 @@ object VisionSkill {
         }
     }
 
-    fun isVisionTool(name: String): Boolean = intentForTool(name) != null
+    fun isVisionTool(name: String): Boolean = name == LOOK_AT_SCENE || intentForTool(name) != null
 }

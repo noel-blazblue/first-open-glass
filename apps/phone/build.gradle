@@ -85,14 +85,20 @@ dependencies {
 afterEvaluate {
     tasks.named("preBuild").configure { dependsOn("fetchVoskModel") }
     tasks.matching { it.name == "installDebug" }.configureEach {
+        doFirst {
+            def serial = System.getenv("ANDROID_SERIAL") ?: System.getenv("PHONE_SERIAL")
+            if (!serial) {
+                throw new GradleException("installDebug 必须设置 ANDROID_SERIAL=<手机 serial>。AGP 会装到所有 adb 设备，禁止装到眼镜。")
+            }
+        }
         doLast {
             def envFile = rootProject.file(".env")
             if (!envFile.exists()) {
                 logger.warn("workspace .env missing, skip pushing DeepSeek key")
                 return
             }
+            def serial = System.getenv("ANDROID_SERIAL") ?: System.getenv("PHONE_SERIAL")
             exec {
-                def serial = System.getenv("ANDROID_SERIAL") ?: "e1109082"
                 commandLine "adb", "-s", serial, "push", envFile.absolutePath,
                     "/sdcard/Android/data/com.glass.dining.phone/files/ai.env"
             }

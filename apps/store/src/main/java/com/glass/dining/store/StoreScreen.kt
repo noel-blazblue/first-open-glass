@@ -86,7 +86,16 @@ private fun StoreRow(store: Store, onClick: () -> Unit) {
             .padding(12.dp),
     ) {
         Text(store.shortName.ifBlank { store.name }, color = TextMain, fontWeight = FontWeight.Bold)
-        Text("${store.category} · $coord", color = TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+        Text(
+            listOfNotNull(
+                store.category.ifBlank { null },
+                store.floor.trim().ifBlank { null },
+                coord,
+            ).joinToString(" · "),
+            color = TextDim,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 4.dp),
+        )
         if (store.address.isNotBlank()) {
             Text(store.address, color = TextDim, fontSize = 12.sp)
         }
@@ -99,6 +108,7 @@ private fun Editor(form: StoreForm, viewModel: StoreViewModel) {
     Field("简称", form.shortName) { viewModel.updateForm { it.copy(shortName = this) } }
     Field("分类", form.category) { viewModel.updateForm { it.copy(category = this) } }
     Field("地址", form.address) { viewModel.updateForm { it.copy(address = this) } }
+    Field("楼层（如 4 / 4F / B1，室内导航用）", form.floor) { viewModel.updateForm { it.copy(floor = this) } }
     Field("电话", form.phone) { viewModel.updateForm { it.copy(phone = this) } }
     Field("营业时间", form.hours) { viewModel.updateForm { it.copy(hours = this) } }
     Field("人均", form.avgPrice) { viewModel.updateForm { it.copy(avgPrice = this) } }

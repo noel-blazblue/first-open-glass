@@ -1,0 +1,130 @@
+package com.glass.dining.phone.agent
+
+import com.glass.dining.shared.agent.AgentToolCatalog
+import com.glass.dining.shared.engine.StoreVision
+import com.glass.dining.shared.hud.HudCard
+import com.glass.dining.shared.model.ActiveSkill
+import org.json.JSONObject
+
+class DiningToolProvider(private val world: PhoneWorld) {
+    fun register(registry: ToolRegistry) {
+        registry.register(AgentToolCatalog.RECOMMEND, ::recommend)
+        registry.register(AgentToolCatalog.SELECT_STORE, ::select)
+        registry.register(AgentToolCatalog.ASK_STORE, ::askStore)
+    }
+
+    private fun recommend(args: JSONObject): String {
+        world.reloadCatalogWithGps()
+        if (world.session.catalog.isEmpty()) {
+            return JSONObject()
+                .put("ok", false)
+                .put("error", "empty_catalog")
+                .put("hint", "search_nearby_places")
+                .put("message", "本地餐饮目录是空的，请搜索附近公开地点")
+                .toString()
+        }
+        if (world.session.activeSkill == ActiveSkill.NAV) {
+            world.stopNav(silent = true)
+        }
+        val query = args.optString("query").ifBlank { "附近好吃的" }
+        val text = if (args.optBoolean("avoid_queue", false)) "$query 不要排队" else query
+        val result = world.session.recommend(text)
+            ?: return JSONObject()
+                .put("ok", false)
+                .put("error", "empty_catalog")
+                .put("hint", "search_nearby_places")
+                .put("message", "本地目录没有合适的店，请搜索附近公开地点")
+                .toString()
+        world.recommendedThisTurn = true
+        world.rememberSpokenStore()
+        world.publishSkillCard(HudCard.fromRecommend(result), ActiveSkill.BROWSE, result.tts, "recommend")
+        return facts(result).put("message", result.tts).toString()
+    }
+
+    private fun select(args: JSONObject): String {
+        if (world.session.activeSkill == ActiveSkill.NAV) {
+            world.stopNav(silent = true)
+        }
+        val storeId = args.optString("store_id").ifBlank { args.optString("place_id") }
+        val name = args.optString("name")
+        val index = args.optInt("index", 0)
+        val result = when {
+            storeId.isNotBlank() -> {
+                world.session.select(storeId)
+                    ?: world.latestPlaces().firstOrNull { it.id == storeId || it.storeId == storeId }
+                        ?.let { world.bindPlace(it) }
+            }
+            index in 1..9 -> {
+                val picked = world.session.candidates.getOrNull(index - 1)
+                    ?: world.latestPlaces().getOrNull(index - 1)?.let { return finishSelect(world.bindPlace(it)) }
+                    ?: return JSONObject().put("ok", false).put("error", "没有第${index}家").toString()
+                world.session.select(picked.id)
+            }
+            name.isNotBlank() -> {
+                val fromCand = world.session.candidates.firstOrNull {
+                    it.shortName.contains(name) || it.name.contains(name)
+                }
+                val catalog = StoreVision.matchStore(world.session.catalog.stores(), name)
+                val poi = world.latestPlaces().firstOrNull { it.name.contains(name) }
+                when {
+                    fromCand != null -> world.session.select(fromCand.id)
+                    catalog != null -> world.session.select(catalog.id)
+                    poi != null -> world.bindPlace(poi)
+                    else -> return JSONObject()
+                        .put("ok", false)
+                        .put("error", "没找到$name")
+                        .put("hint", "search_nearby_places")
+                        .toString()
+                }
+            }
+            else -> world.session.lastMatch
+                ?: return JSONObject().put("ok", false).put("error", "还没有候选地点").toString()
+        } ?: return JSONObject().put("ok", false).put("error", "没找到这家").toString()
+        return finishSelect(result)
+    }
+
+    private fun finishSelect(result: com.glass.dining.shared.model.MatchResult): String {
+        world.selectedThisTurn = true
+        world.rememberSpokenStore()
+        world.publishMatch(result, "选定")
+        return facts(result).put("message", "已选${result.store.shortName}").toString()
+    }
+
+    private fun askStore(args: JSONObject): String {
+        val store = world.session.currentStore
+            ?: return JSONObject().put("ok", false).put("error", "还没有确认的地点").toString()
+        val question = args.optString("question").ifBlank { world.question }
+        val result = world.session.ask(question)
+        return JSONObject()
+            .put("ok", true)
+            .put("store", store.shortName)
+            .put("catalog_backed", store.catalogBacked)
+            .put("message", result.answer)
+            .toString()
+    }
+
+    companion object {
+        fun facts(result: com.glass.dining.shared.model.MatchResult): JSONObject {
+            val store = result.store
+            val json = JSONObject()
+                .put("ok", true)
+                .put("store_id", store.id)
+                .put("place_id", store.id)
+                .put("store", store.name)
+                .put("shortName", store.shortName)
+                .put("address", store.address)
+                .put("source", store.source)
+                .put("catalog_backed", store.catalogBacked)
+                .put("candidates", result.candidates.joinToString("、") { it.shortName })
+            if (store.catalogBacked) {
+                json.put("rating", store.rating)
+                    .put("avgPrice", store.avgPrice)
+                    .put("waitMinutes", store.waitMinutes)
+                    .put("openNow", store.openNow)
+                    .put("signatures", store.signatures.joinToString("、"))
+                    .put("deals", store.deals.joinToString("；") { "${it.title}现价${it.price}" })
+            }
+            return json
+        }
+    }
+}

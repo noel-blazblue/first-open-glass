@@ -8,10 +8,11 @@ data class HypothesisScore(
 )
 
 /**
- * 端侧「像不像店」：用 OCR 框几何 + 汉字占比 + 门头亮带，不要求认出店名。
+ * 端侧关键帧/ROI 评分：亮带和大字用来挑帧，不代表门店概率。
  */
 object StoreHypothesis {
     const val THRESHOLD = 0.45f
+    const val STORE_THRESHOLD = 0.55f
     const val CONFIRM_HITS = 2
     const val DISMISS_HITS = 2
     const val STABLE_FRAC = 0.18f
@@ -55,6 +56,22 @@ object StoreHypothesis {
         val reason =
             "size=${fmt(size)} han=${fmt(han)} band=${fmt(bandClamped)} stable=${fmt(stable)} n=${signLike.size}/${large.size}"
         return HypothesisScore(total, reason, center.first, center.second)
+    }
+
+    /** 门店似然：没有汉字大字时不为店，黄色横幅不能靠亮带过线。 */
+    fun storeLikelihood(
+        width: Int,
+        height: Int,
+        ocr: List<OcrBlock>,
+        band: Float,
+    ): Float {
+        val large = largeBlocks(ocr, width, height)
+        val han = hanScore(large)
+        if (han < HAN_TRUST) return 0f
+        val signLike = large
+        val size = sizeScore(signLike, width, height)
+        val bandClamped = band.coerceIn(0f, 1f)
+        return (size * 0.40f + han * 0.35f + bandClamped * 0.25f).coerceIn(0f, 1f)
     }
 
     private fun sizeScore(large: List<OcrBlock>, width: Int, height: Int): Float {
