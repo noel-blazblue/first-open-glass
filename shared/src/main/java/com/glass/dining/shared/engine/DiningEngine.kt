@@ -1,6 +1,8 @@
 package com.glass.dining.shared.engine
 
-import com.glass.dining.shared.mock.MockCatalog
+import com.glass.dining.shared.catalog.MemoryStoreCatalog
+import com.glass.dining.shared.catalog.StoreCatalog
+import com.glass.dining.shared.catalog.StoreCatalogIds
 import com.glass.dining.shared.mock.MockCommerce
 import com.glass.dining.shared.model.ActiveSkill
 import com.glass.dining.shared.model.Coupon
@@ -10,51 +12,45 @@ import com.glass.dining.shared.model.MenuItem
 import com.glass.dining.shared.model.PayOrder
 import com.glass.dining.shared.model.QaResult
 import com.glass.dining.shared.model.RedeemReceipt
-import com.glass.dining.shared.model.Scene
 import com.glass.dining.shared.model.Store
 import kotlin.math.roundToInt
 
 class DiningMatcher(
-    private val catalog: MockCatalog = MockCatalog,
+    private val catalog: StoreCatalog,
 ) {
-    fun match(input: LookInput): MatchResult {
-        val scene = catalog.sceneById(input.sceneId)
-        val forced = input.forceStoreId?.let { id -> scene.stores.firstOrNull { it.id == id } }
-        val fromVision = input.visionHint?.let { StoreVision.matchStore(scene, it) }
-        val fromPhoto = if (fromVision == null) {
-            input.imageFingerprint?.let { StoreVision.pickByFingerprint(scene, it) }
-        } else {
-            null
-        }
-        val store = forced ?: fromVision ?: fromPhoto ?: pickDefault(scene, input.headingDegrees)
+    fun match(input: LookInput): MatchResult? {
+        val stores = catalog.stores()
+        if (stores.isEmpty()) return null
+        val forced = input.forceStoreId?.let { id -> catalog.storeById(id) }
+        val fromVision = input.visionHint?.let { StoreVision.matchStore(stores, it) }
+        val store = forced ?: fromVision ?: return null
         val confidence = when {
             forced != null -> 0.99f
             fromVision != null -> 0.92f
-            fromPhoto != null -> 0.76f
-            else -> (0.84f + (store.rating.toFloat() - 4.0f) * 0.08f).coerceIn(0.78f, 0.97f)
+            else -> 0.8f
         }
-        return resultOf(scene, store, confidence)
+        return resultOf(store, stores, confidence)
     }
 
-    fun next(sceneId: String, currentStoreId: String?): MatchResult {
-        val scene = catalog.sceneById(sceneId)
-        if (scene.stores.isEmpty()) {
-            error("empty scene ${scene.id}")
-        }
-        val index = scene.stores.indexOfFirst { it.id == currentStoreId }
-        val nextIndex = if (index < 0) 0 else (index + 1) % scene.stores.size
-        return resultOf(scene, scene.stores[nextIndex], confidence = 0.88f)
+    fun next(currentStoreId: String?): MatchResult? {
+        val stores = catalog.stores()
+        if (stores.isEmpty()) return null
+        val index = stores.indexOfFirst { it.id == currentStoreId }
+        val nextIndex = if (index < 0) 0 else (index + 1) % stores.size
+        return resultOf(stores[nextIndex], stores, confidence = 0.88f)
     }
 
-    fun select(sceneId: String, storeId: String): MatchResult {
-        return match(LookInput(sceneId = sceneId, forceStoreId = storeId))
+    fun select(storeId: String): MatchResult? {
+        return match(LookInput(forceStoreId = storeId))
     }
 
-    fun recommend(sceneId: String, query: String): MatchResult {
-        val scene = catalog.sceneById(sceneId)
-        val picked = filterRecommend(scene.stores, query).ifEmpty {
-            scene.stores.sortedBy { it.distanceMeters }.take(3)
+    fun recommend(query: String): MatchResult? {
+        val stores = catalog.stores()
+        if (stores.isEmpty()) return null
+        val picked = filterRecommend(stores, query).ifEmpty {
+            stores.sortedBy { if (it.distanceMeters > 0) it.distanceMeters else Int.MAX_VALUE }.take(3)
         }
+        if (picked.isEmpty()) return null
         val store = picked.first()
         val names = picked.joinToString("、") { it.shortName }
         val waitHint = if (picked.all { it.waitMinutes <= 0 }) {
@@ -67,7 +63,7 @@ class DiningMatcher(
             candidates = picked,
             tts = "附近有$names。${waitHint}去哪家？",
             confidence = 0.86f,
-            sceneId = scene.id,
+            sceneId = StoreCatalogIds.LOCAL_SCENE,
         )
     }
 
@@ -90,40 +86,26 @@ class DiningMatcher(
             val shortWait = pool.filter { it.waitMinutes <= 10 }.sortedBy { it.waitMinutes }
             pool = shortWait.ifEmpty { pool.sortedBy { it.waitMinutes } }
         }
-        if (q.contains("约会")) {
-            pool = pool.filter { "约会" in it.suitable }.ifEmpty { pool }
-        }
-        if (q.contains("带娃") || q.contains("小孩")) {
-            pool = pool.filter { "带娃" in it.suitable }.ifEmpty { pool }
-        }
-        return pool.sortedBy { it.distanceMeters }.take(3)
+        return pool.sortedBy { if (it.distanceMeters > 0) it.distanceMeters else Int.MAX_VALUE }.take(3)
     }
 
-    private fun pickDefault(scene: Scene, headingDegrees: Float?): Store {
-        // 公开 SDK 没有 IMU 朝向。heading 预留，当前按距离最近一家。
-        if (headingDegrees != null) {
-            val shifted = (headingDegrees.roundToInt() / 45).mod(scene.stores.size)
-            return scene.stores[shifted]
-        }
-        return scene.stores.minBy { it.distanceMeters }
-    }
-
-    private fun resultOf(scene: Scene, store: Store, confidence: Float): MatchResult {
-        val candidates = scene.stores
-            .sortedBy { it.distanceMeters }
+    private fun resultOf(store: Store, stores: List<Store>, confidence: Float): MatchResult {
+        val candidates = stores
+            .sortedBy { if (it.distanceMeters > 0) it.distanceMeters else Int.MAX_VALUE }
             .take(3)
+            .ifEmpty { listOf(store) }
         return MatchResult(
             store = store,
             candidates = candidates,
             tts = summaryTts(store),
             confidence = confidence,
-            sceneId = scene.id,
+            sceneId = StoreCatalogIds.LOCAL_SCENE,
         )
     }
 
     companion object {
         fun summaryTts(store: Store): String {
-            val rating = ratingSpeech(store.rating)
+            val rating = if (store.rating > 0) ratingSpeech(store.rating) + "，" else ""
             val wait = if (!store.openNow) {
                 "现在已经打烊"
             } else if (store.waitMinutes <= 0) {
@@ -131,7 +113,8 @@ class DiningMatcher(
             } else {
                 "现在大约排${numberSpeech(store.waitMinutes)}分钟"
             }
-            return "${store.shortName}，${rating}，人均${numberSpeech(store.avgPrice)}，$wait"
+            val price = if (store.avgPrice > 0) "人均${numberSpeech(store.avgPrice)}，" else ""
+            return "${store.shortName}，$rating$price$wait"
         }
 
         private fun ratingSpeech(rating: Double): String {
@@ -160,7 +143,7 @@ class DiningMatcher(
 class QaEngine {
     fun ask(store: Store, question: String): QaResult {
         val intent = detectIntent(question)
-        val answer = store.answers[intent] ?: "${store.shortName}这个问题我暂时只有这些：评分 ${store.rating}，人均 ${store.avgPrice}。"
+        val answer = answerOf(store, intent)
         return QaResult(
             question = question,
             intent = intent,
@@ -179,8 +162,6 @@ class QaEngine {
             q.contains("券") || q.contains("核销") -> "团购"
             q.contains("买单") || q.contains("结账") || q.contains("付款") -> "人均"
             q.contains("团购") || q.contains("优惠") || q.contains("便宜") -> "团购"
-            q.contains("约会") || q.contains("浪漫") -> "约会"
-            q.contains("带娃") || q.contains("小孩") || q.contains("儿童") -> "带娃"
             q.contains("包间") || q.contains("包厢") -> "包间"
             q.contains("评价") || q.contains("怎么样") || q.contains("评分") -> "评价"
             q.contains("营业") || q.contains("开门") || q.contains("打烊") -> "营业"
@@ -188,14 +169,56 @@ class QaEngine {
             else -> "评价"
         }
     }
+
+    private fun answerOf(store: Store, intent: String): String {
+        return when (intent) {
+            "人均" -> if (store.avgPrice > 0) "${store.shortName}人均大约${store.avgPrice}元。" else "${store.shortName}还没录入人均。"
+            "排队" -> if (!store.openNow) {
+                "${store.shortName}现在已经打烊。"
+            } else if (store.waitMinutes <= 0) {
+                "${store.shortName}现在不用排队。"
+            } else {
+                "${store.shortName}现在大约排${store.waitMinutes}分钟，${store.waitTables}桌。"
+            }
+            "招牌" -> if (store.signatures.isNotEmpty()) {
+                "${store.shortName}招牌有${store.signatures.joinToString("、")}。"
+            } else {
+                "${store.shortName}还没录入招牌。"
+            }
+            "团购" -> if (store.deals.isNotEmpty()) {
+                store.deals.joinToString("，") { "${it.title}${it.price}元" }
+            } else {
+                "${store.shortName}还没录入优惠。"
+            }
+            "包间" -> if (store.hasPrivateRoom) "${store.shortName}有包间。" else "${store.shortName}没录入包间。"
+            "营业" -> if (store.hours.isNotBlank()) {
+                "${store.shortName}营业时间${store.hours}。"
+            } else if (store.openNow) {
+                "${store.shortName}现在营业。"
+            } else {
+                "${store.shortName}现在打烊。"
+            }
+            "导航" -> if (store.address.isNotBlank()) {
+                "${store.shortName}在${store.address}。"
+            } else {
+                "可以说出发，我按录入的坐标带你去。"
+            }
+            else -> {
+                val rating = if (store.rating > 0) "评分${store.rating}。" else ""
+                val price = if (store.avgPrice > 0) "人均${store.avgPrice}。" else ""
+                "${store.shortName}。$rating$price".trim()
+            }
+        }
+    }
 }
 
 class DiningSession(
-    private val matcher: DiningMatcher = DiningMatcher(),
+    catalog: StoreCatalog = MemoryStoreCatalog(),
     private val qaEngine: QaEngine = QaEngine(),
-    initialSceneId: String = MockCatalog.defaultSceneId,
 ) {
-    var sceneId: String = initialSceneId
+    private var matcher = DiningMatcher(catalog)
+
+    @Volatile var catalog: StoreCatalog = catalog
         private set
     var lastMatch: MatchResult? = null
         private set
@@ -217,53 +240,61 @@ class DiningSession(
     val candidates: List<Store>
         get() = lastMatch?.candidates.orEmpty()
 
-    fun setScene(id: String) {
-        sceneId = id
-        lastMatch = null
-        lastMenu = emptyList()
-        lastCoupons = emptyList()
-        pendingCoupon = null
-        pendingPay = null
-        lastReceipt = null
-        activeSkill = ActiveSkill.NONE
+    fun replaceCatalog(next: StoreCatalog) {
+        catalog = next
+        matcher = DiningMatcher(next)
+        val currentId = lastMatch?.store?.id
+        if (currentId != null) {
+            val refreshed = matcher.select(currentId)
+            if (refreshed != null) {
+                lastMatch = lastMatch?.copy(
+                    store = refreshed.store,
+                    candidates = refreshed.candidates,
+                ) ?: refreshed
+            }
+        }
     }
 
     fun look(
         forceStoreId: String? = null,
         imageBase64: String? = null,
         visionHint: String? = null,
-        imageFingerprint: Long? = null,
-    ): MatchResult {
+    ): MatchResult? {
         val result = matcher.match(
             LookInput(
-                sceneId = sceneId,
                 forceStoreId = forceStoreId,
                 imageBase64 = imageBase64,
                 visionHint = visionHint,
-                imageFingerprint = imageFingerprint,
             ),
-        )
+        ) ?: return null
         lastMatch = result
         activeSkill = ActiveSkill.BROWSE
         return result
     }
 
-    fun next(): MatchResult {
-        val result = matcher.next(sceneId, lastMatch?.store?.id)
+    fun clearLook() {
+        lastMatch = null
+        if (activeSkill == ActiveSkill.BROWSE) {
+            activeSkill = ActiveSkill.NONE
+        }
+    }
+
+    fun next(): MatchResult? {
+        val result = matcher.next(lastMatch?.store?.id) ?: return null
         lastMatch = result
         activeSkill = ActiveSkill.BROWSE
         return result
     }
 
-    fun select(storeId: String): MatchResult {
-        val result = matcher.select(sceneId, storeId)
+    fun select(storeId: String): MatchResult? {
+        val result = matcher.select(storeId) ?: return null
         lastMatch = result
         activeSkill = ActiveSkill.BROWSE
         return result
     }
 
-    fun recommend(query: String): MatchResult {
-        val result = matcher.recommend(sceneId, query)
+    fun recommend(query: String): MatchResult? {
+        val result = matcher.recommend(query) ?: return null
         lastMatch = result
         activeSkill = ActiveSkill.BROWSE
         return result
@@ -288,15 +319,14 @@ class DiningSession(
         activeSkill = if (lastMatch != null) ActiveSkill.BROWSE else ActiveSkill.NONE
     }
 
-    fun startMenu(items: List<MenuItem> = MockCommerce.menuOf(currentStore?.id.orEmpty())): List<MenuItem> {
+    fun startMenu(items: List<MenuItem> = MockCommerce.menuOf(currentStore)): List<MenuItem> {
         lastMenu = items
         activeSkill = ActiveSkill.MENU
         return items
     }
 
     fun listCoupons(): List<Coupon> {
-        val storeId = currentStore?.id ?: return emptyList()
-        lastCoupons = MockCommerce.couponsOf(storeId)
+        lastCoupons = MockCommerce.couponsOf(currentStore)
         pendingCoupon = null
         activeSkill = ActiveSkill.COUPON
         return lastCoupons
@@ -304,7 +334,7 @@ class DiningSession(
 
     fun prepareCoupon(couponId: String): Coupon? {
         val coupon = lastCoupons.firstOrNull { it.id == couponId }
-            ?: currentStore?.id?.let { storeId -> MockCommerce.couponsOf(storeId).firstOrNull { it.id == couponId } }
+            ?: MockCommerce.couponsOf(currentStore).firstOrNull { it.id == couponId }
             ?: lastCoupons.firstOrNull()
         pendingCoupon = coupon
         if (coupon != null) {

@@ -56,11 +56,15 @@ class HudViewModel : ViewModel() {
             statusLine = "正在拍照识别…",
         )
         GlassSdkHost.captureAndRecognize(
-            onResult = { hint, fingerprint ->
-                val result = session.look(visionHint = hint, imageFingerprint = fingerprint)
-                publishMatch(result, spoken = true)
-                if (hint.isNullOrBlank() && !GlassSdkHost.ready) {
-                    _ui.value = _ui.value.copy(statusLine = "已拍照，按店招指纹匹配附近门店")
+            onResult = { hint, _ ->
+                val result = session.look(visionHint = hint)
+                if (result != null) {
+                    publishMatch(result, spoken = true)
+                } else {
+                    _ui.value = _ui.value.copy(
+                        recognizing = false,
+                        statusLine = "对不上已录入的门店",
+                    )
                 }
             },
             onFailed = { reason ->
@@ -74,7 +78,9 @@ class HudViewModel : ViewModel() {
 
     fun next() {
         val result = session.next()
-        publishMatch(result, spoken = true)
+        if (result != null) {
+            publishMatch(result, spoken = true)
+        }
     }
 
     fun ask(question: String) {
@@ -86,7 +92,7 @@ class HudViewModel : ViewModel() {
         GlassSdkHost.sendText(
             DiningMessage(
                 type = DiningMsgType.ASK,
-                sceneId = session.sceneId,
+                sceneId = session.lastMatch?.sceneId,
                 storeId = session.lastMatch?.store?.id,
                 question = text,
             ).toJson(),
@@ -142,7 +148,6 @@ class HudViewModel : ViewModel() {
         when (msg.type) {
             DiningMsgType.STORE_RESULT -> {
                 msg.store?.let { store ->
-                    msg.sceneId?.let { session.setScene(it) }
                     val alreadyShown = _ui.value.store?.id == store.id
                     session.select(store.id)
                     _ui.value = HudUiState(

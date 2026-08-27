@@ -4,7 +4,7 @@
 
 产品是 **到餐 Agent**，不是导航 App。对话是唯一入口；认店、推荐、导航、以及以后的菜单 / 验券 / 结账都是 Agent 可调用的技能。有目的店且用户要出发时，由模型调用 `start_nav`，不靠固定口令。
 
-店名、排队、人均、团购 **mock**。定位、步行路线、剩余距离 **必须是真的**。没有眼镜时，用手机里的绿字 HUD 预览走通主路径。
+店来自 **门店录入 App**（店门口记录真实经纬度），APK 不带店数据。排队、人均、招牌由录入填写。定位、步行路线、剩余距离用真 GPS + 高德。支付和核券本轮仍未接真接口。没有眼镜时，用手机里的绿字 HUD 预览走通主路径。
 
 本仓库的眼镜是消费固件（系统版本号不含 `e`）。**不要**再用企业版 `GlassSdk` / `PSecuritySDK` 当主路径。
 
@@ -112,8 +112,8 @@
 - 默认对话面；认店 / 推荐后门店卡；仅 `start_nav` 后导航条
 - 没选店禁止开导航；有店且用户要走则模型调 tool，不靠固定口令
 - 短 TTS；眼镜麦 PCM + 手机 Vosk
-- 候选 2～3 家；店内问答（脚本 mock，有 LLM 时走 Agent）
-- 真 GPS + 高德步行：剩余米数随定位变，偏航重规划，到店判定
+- 候选 2～3 家；店内问答用录入字段（人均/排队/招牌）
+- 真 GPS + 高德步行：终点是录入坐标，剩余米数随定位变，偏航重规划，到店判定
 - 手机端绿字 HUD 预览与镜片同一套 talk / card
 
 ### P1（骨架预留）
@@ -139,15 +139,16 @@
 
 | 端 | 职责 |
 | --- | --- |
-| 共享模块 `shared/` | 门店模型、商圈 mock、`DiningSession`、问答脚本、绿字 `HudCard` |
+| 共享模块 `shared/` | 门店模型、目录 JSON、`DiningSession`、绿字 `HudCard` |
 | `nav-api/` | 眼镜 CustomApp 通道与 HUD/导航指令 |
-| 手机 `apps/phone` | **主应用 / 产品入口**。乐奇授权拿 CXR token；`CXRLink` + `CUSTOMAPP`；Agent 工具；TTS；GPS + 高德步行；无眼镜时本地预览 |
+| 手机 `apps/phone` | **主应用 / 产品入口**。乐奇授权拿 CXR token；`CXRLink` + `CUSTOMAPP`；Agent 工具；TTS；GPS + 高德步行；读门店目录 |
+| 门店 `apps/store` | 线下录入店名和当前经纬度，写入 `Download/glass-stores.json`；改完不用重装到餐 |
 | 乐奇 AI App | 连眼镜、桥接 IO。本 App 不自己扫 Glass3 蓝牙 |
 | 眼镜 CustomApp | 一块 Activity：对话 talk / 门店卡 / 导航条；默认对话面；仅 `look_store` 单次快门 |
 | `apps/phone-nav` | 实验室旁路，**不是**产品入口 |
 | `apps/glass` | **归档**，仅作历史裸机实验，不参与本期验收 |
 
-数据路径与消费版文档一致：`眼镜 ⇄ 乐奇 AI App ⇄ 本机 CXR-L ⇄ 手机 GPS / 高德步行 / mock 店`。
+数据路径：`眼镜 ⇄ 乐奇 AI App ⇄ 本机 CXR-L ⇄ 手机 GPS / 高德步行 / 门店 App 录入的真实坐标`。
 
 ---
 
@@ -155,7 +156,8 @@
 
 ```text
 apps/phone     主应用：到餐 Agent + CXR-L + 乐奇 + GPS 步行 + 绿字预览
-shared         模型 / mock / 匹配 / 问答 / HudCard
+apps/store     门店录入：店名 + 当前经纬度，随时改 JSON
+shared         模型 / 目录 JSON / 匹配 / 问答 / HudCard
 nav-api        CustomApp 通道
 apps/glass-nav 眼镜 CustomApp（对话面 / 门店卡 / 导航条）
 apps/phone-nav 实验室，不当入口
@@ -167,9 +169,9 @@ apps/glass     归档（企业/裸机）
 - 乐奇包名：`com.rokid.sprite.aiapp`（需 ≥ 1.7.14）
 - 消费版 SDK 文档：[open.rokid.com/sdk](https://open.rokid.com/sdk)
 - 步行路线：高德 Web 服务 `v3/direction/walking`，密钥 `AMAP_WEB_KEY`（与 DeepSeek 一起放 `ai.env`）
-- 目的店坐标：按真 GPS + mock `distanceMeters` 钉在用户身边，禁止用写死的三里屯经纬度当终点
+- 目的店坐标：门店 App 在店门口记录的真实 lat/lng，禁止把店钉在用户身边
 
-本期 mock 店数据；DeepSeek 当 Agent 规划器，有目的店且用户要出发时调用 `start_nav`。
+店数据不打进 APK。DeepSeek 当 Agent 规划器，有目的店且用户要出发时调用 `start_nav`。支付/核券仍未接真接口。
 
 ---
 

@@ -109,10 +109,7 @@ data class QaResult(
 )
 
 data class LookInput(
-    val sceneId: String,
     val forceStoreId: String? = null,
     val imageBase64: String? = null,
     val visionHint: String? = null,
-    val imageFingerprint: Long? = null,
-    val headingDegrees: Float? = null,
 )

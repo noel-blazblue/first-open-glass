@@ -13,7 +13,7 @@ object QualityGate {
     private val lastHash = AtomicLong(Long.MIN_VALUE)
     private val lastAt = AtomicLong(0)
 
-    fun inspect(jpeg: ByteArray): Pair<Bitmap?, QualityReport> {
+    fun inspect(jpeg: ByteArray, skipDuplicate: Boolean = false): Pair<Bitmap?, QualityReport> {
         if (jpeg.isEmpty()) {
             return null to QualityReport(ok = false, reason = "眼镜回了空图")
         }
@@ -25,7 +25,7 @@ object QualityGate {
         val now = System.currentTimeMillis()
         val prevHash = lastHash.get()
         val prevAt = lastAt.get()
-        val duplicate = prevHash == hash && now - prevAt < DUP_WINDOW_MS
+        val duplicate = !skipDuplicate && prevHash == hash && now - prevAt < DUP_WINDOW_MS
         lastHash.set(hash)
         lastAt.set(now)
         if (duplicate) {

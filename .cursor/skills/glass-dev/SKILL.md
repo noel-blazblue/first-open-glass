@@ -11,8 +11,8 @@ description: >-
 
 # Glass Dev Playbook
 
-消费版主路径是手机 **CXR-L** + 乐奇 CustomView，现场坑记在 [lessons.md](lessons.md)。  
-企业版 `GlassSdk` 文档在 [rokid-glass3-sdk](../rokid-glass3-sdk/SKILL.md)，只作对照，不要往消费固件上接。  
+主路径是手机 **CXR-L** + 乐奇把 **CustomApp** 拉到前台；眼镜能力按原生 Android 做，不要用消费版/企业版自我设限。现场坑记在 [lessons.md](lessons.md)。  
+企业 `GlassSdk` / `PSecuritySDK` 文档在 [rokid-glass3-sdk](../rokid-glass3-sdk/SKILL.md)，只作对照，不是能力上限。  
 本 Skill 管**现场开发**：真机、ADB、显示通路、CXR 连接、验证方法，以及把踩坑写成可复用经验。
 
 ## 何时用

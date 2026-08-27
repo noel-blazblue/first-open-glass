@@ -4,8 +4,12 @@ import android.content.Context
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
+import com.glass.dining.phone.vision.FrameJpeg
+import com.glass.dining.phone.vision.StreamVision
 import com.glass.dining.shared.nav.NavProtocol
+import com.glass.dining.shared.vision.KeyframePolicy
 import org.webrtc.DataChannel
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
@@ -54,6 +58,9 @@ object PhoneRtc {
     private var remoteSet: Boolean = false
     @Volatile private var initialized: Boolean = false
     private val sink = ProxySink()
+    private val latestLock = Any()
+    private var latestFrame: VideoFrame? = null
+    @Volatile private var lastFrameAt: Long = 0
 
     fun prepare(context: Context) {
         val done = java.util.concurrent.CountDownLatch(1)
@@ -101,6 +108,45 @@ object PhoneRtc {
     fun attachRenderer(view: SurfaceViewRenderer) {
         pendingRenderer = view
         main.post { bindRenderer() }
+    }
+
+    fun hasFreshFrame(maxAgeMs: Long = KeyframePolicy.FRESH_FRAME_MS): Boolean {
+        if (!active) return false
+        val at = lastFrameAt
+        return at > 0L && SystemClock.elapsedRealtime() - at <= maxAgeMs
+    }
+
+    fun grabJpeg(timeoutMs: Long = 2_500): ByteArray? {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val result = java.util.concurrent.atomic.AtomicReference<ByteArray?>()
+            val done = java.util.concurrent.CountDownLatch(1)
+            rtc.post {
+                try {
+                    val snap = snapshotFrame()
+                    if (snap != null) {
+                        try {
+                            result.set(FrameJpeg.encode(snap))
+                        } finally {
+                            snap.release()
+                        }
+                    }
+                } finally {
+                    done.countDown()
+                }
+            }
+            if (!done.await(800, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                continue
+            }
+            val jpeg = result.get()
+            if (jpeg != null && jpeg.isNotEmpty()) return jpeg
+            try {
+                Thread.sleep(80)
+            } catch (_: InterruptedException) {
+                return null
+            }
+        }
+        return null
     }
 
     fun detachRenderer(view: SurfaceViewRenderer? = null) {
@@ -182,6 +228,8 @@ object PhoneRtc {
         active = false
         remoteSet = false
         pendingIce.clear()
+        StreamVision.stop()
+        releaseLatestFrame()
         try {
             remoteTrack?.removeSink(sink)
         } catch (_: Exception) {
@@ -192,7 +240,6 @@ object PhoneRtc {
         } catch (_: Exception) {
         }
         pc = null
-        status("视频流已关")
         Log.i(TAG, "rtc stopped")
     }
 
@@ -271,7 +318,7 @@ object PhoneRtc {
                 PeerConnection.IceConnectionState.COMPLETED,
                 -> "画面应开始出。帧=${frames.get()}"
                 PeerConnection.IceConnectionState.FAILED ->
-                    "ICE 失败。眼镜和手机需要同一 Wi-Fi 或开热点，CXR 蓝牙传不了 RTP。"
+                    "ICE 失败。Direct 没通，RTP 过不来。"
                 PeerConnection.IceConnectionState.DISCONNECTED -> "ICE 断开"
                 else -> "ice=$name"
             }
@@ -320,11 +367,42 @@ object PhoneRtc {
         @Volatile var target: VideoSink? = null
         override fun onFrame(frame: VideoFrame) {
             val n = frames.incrementAndGet()
+            holdLatest(frame)
+            if (n == 1) {
+                StreamVision.start()
+            }
             if (n == 1 || n % 40 == 0) {
                 Log.i(TAG, "frame n=$n ${frame.buffer.width}x${frame.buffer.height}")
                 status("已收到 ${frame.buffer.width}x${frame.buffer.height} 第${n}帧")
             }
             target?.onFrame(frame)
+        }
+    }
+
+    private fun holdLatest(frame: VideoFrame) {
+        frame.retain()
+        val old = synchronized(latestLock) {
+            val prev = latestFrame
+            latestFrame = frame
+            lastFrameAt = SystemClock.elapsedRealtime()
+            prev
+        }
+        old?.release()
+    }
+
+    private fun snapshotFrame(): VideoFrame? {
+        synchronized(latestLock) {
+            val held = latestFrame ?: return null
+            held.retain()
+            return held
+        }
+    }
+
+    private fun releaseLatestFrame() {
+        synchronized(latestLock) {
+            latestFrame?.release()
+            latestFrame = null
+            lastFrameAt = 0
         }
     }
 

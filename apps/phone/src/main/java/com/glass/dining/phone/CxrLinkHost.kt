@@ -232,6 +232,8 @@ object CxrLinkHost {
                 NavProtocol.CMD_RTC_SDP,
                 NavProtocol.CMD_RTC_ICE,
                 NavProtocol.CMD_RTC_STAT,
+                NavProtocol.CMD_P2P_READY,
+                NavProtocol.CMD_P2P_FAIL,
                 -> {
                     val payload = readString(caps, 1)
                     main.post { onRtc?.invoke(cmd, payload) }

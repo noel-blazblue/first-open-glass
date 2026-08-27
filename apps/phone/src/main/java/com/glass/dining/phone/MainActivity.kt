@@ -58,6 +58,11 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra("ask")?.let { viewModel.onHeard(it) }
     }
 
+    override fun onResume() {
+        super.onResume()
+        viewModel.reloadCatalog()
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)

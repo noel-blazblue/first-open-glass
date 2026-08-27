@@ -138,7 +138,7 @@ object GlassRtc {
         )
         val root = EglBase.create()
         egl = root
-        val encoder = DefaultVideoEncoderFactory(root.eglBaseContext, true, false)
+        val encoder = DefaultVideoEncoderFactory(root.eglBaseContext, true, true)
         val decoder = DefaultVideoDecoderFactory(root.eglBaseContext)
         factory = PeerConnectionFactory.builder()
             .setVideoEncoderFactory(encoder)
@@ -176,6 +176,7 @@ object GlassRtc {
         val texture = SurfaceTextureHelper.create("glass-rtc-tex", egl!!.eglBaseContext)
         val videoSource = peerFactory.createVideoSource(false)
         nextCapturer.initialize(texture, context, videoSource.capturerObserver)
+        videoSource.adaptOutputFormat(NavProtocol.RTC_WIDTH, NavProtocol.RTC_HEIGHT, NavProtocol.RTC_FPS)
         nextCapturer.startCapture(NavProtocol.RTC_WIDTH, NavProtocol.RTC_HEIGHT, NavProtocol.RTC_FPS)
         val videoTrack = peerFactory.createVideoTrack("glass-v", videoSource)
         videoTrack.setEnabled(true)
@@ -184,7 +185,9 @@ object GlassRtc {
             val params = sender.parameters
             params.encodings.firstOrNull()?.let { encoding ->
                 encoding.maxBitrateBps = NavProtocol.RTC_MAX_BITRATE
+                encoding.minBitrateBps = NavProtocol.RTC_MIN_BITRATE
                 encoding.maxFramerate = NavProtocol.RTC_FPS
+                encoding.scaleResolutionDownBy = 1.0
             }
             sender.parameters = params
         }
@@ -270,7 +273,7 @@ object GlassRtc {
             if (state == PeerConnection.IceConnectionState.FAILED) {
                 emit(
                     NavProtocol.CMD_ERROR,
-                    "ICE 失败，眼镜到手机可能没有 IP 通路（需要同一 Wi-Fi 或手机热点）",
+                    "ICE 失败，Direct 没通，RTP 过不来。",
                 )
             }
         }

@@ -1,20 +1,18 @@
 package com.glass.dining.shared.engine
 
-import com.glass.dining.shared.model.Scene
 import com.glass.dining.shared.model.ScoredStore
 import com.glass.dining.shared.model.Store
-import kotlin.math.absoluteValue
 
 object StoreVision {
-    fun matchStore(scene: Scene, rawHint: String): Store? {
-        return rankStores(scene, rawHint).firstOrNull()?.store
+    fun matchStore(stores: List<Store>, rawHint: String): Store? {
+        return rankStores(stores, rawHint).firstOrNull()?.store
     }
 
-    fun rankStores(scene: Scene, rawHint: String): List<ScoredStore> {
+    fun rankStores(stores: List<Store>, rawHint: String): List<ScoredStore> {
         val hint = rawHint.trim()
         if (hint.isBlank() || isUnknown(hint)) return emptyList()
         val compact = compact(hint)
-        return scene.stores.mapNotNull { store ->
+        return stores.mapNotNull { store ->
             val best = keysOf(store).map { key -> key to scoreKey(compact, hint, key) }.maxByOrNull { it.second }
             if (best != null && best.second > 0) {
                 ScoredStore(store, best.second, best.first)
@@ -22,12 +20,6 @@ object StoreVision {
                 null
             }
         }.sortedByDescending { it.score }
-    }
-
-    fun pickByFingerprint(scene: Scene, fingerprint: Long): Store? {
-        if (scene.stores.isEmpty()) return null
-        val index = (fingerprint.absoluteValue % scene.stores.size).toInt()
-        return scene.stores[index]
     }
 
     private fun isUnknown(hint: String): Boolean {
@@ -44,12 +36,7 @@ object StoreVision {
                     name.replace("店", ""),
                 )
             }
-        val brands = listOf(
-            "海底捞", "喜茶", "巴奴", "西贝", "奈雪", "麦当劳", "春风十里", "屋头",
-            "大董", "京A", "鼎泰丰", "星巴克", "云海肴", "楼外楼", "知味观",
-            "新白鹿", "绿茶", "肯德基", "夜归",
-        ).filter { brand -> store.name.contains(brand) || store.shortName.contains(brand) }
-        return (fromName + brands + store.tags)
+        return (fromName + store.tags + store.signatures)
             .map { it.trim() }
             .filter { it.length >= 2 }
             .distinct()

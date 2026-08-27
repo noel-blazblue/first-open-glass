@@ -34,18 +34,23 @@ object NavProtocol {
     const val CMD_RTC_SDP = "rtc.sdp"
     const val CMD_RTC_ICE = "rtc.ice"
     const val CMD_RTC_STAT = "rtc.stat"
+    const val CMD_P2P_OFFER = "p2p.offer"
+    const val CMD_P2P_READY = "p2p.ready"
+    const val CMD_P2P_STOP = "p2p.stop"
+    const val CMD_P2P_FAIL = "p2p.fail"
 
     const val PCM_SAMPLE_RATE = 16_000
 
     const val FRAME_INTERVAL_MS = 5_000L
-    const val JPEG_WIDTH = 640
-    const val JPEG_HEIGHT = 480
-    const val JPEG_QUALITY = 55
+    const val JPEG_WIDTH = 1280
+    const val JPEG_HEIGHT = 720
+    const val JPEG_QUALITY = 72
     const val SDP_CHUNK = 2400
-    const val RTC_WIDTH = 640
-    const val RTC_HEIGHT = 480
-    const val RTC_FPS = 8
-    const val RTC_MAX_BITRATE = 600_000
+    const val RTC_WIDTH = 1280
+    const val RTC_HEIGHT = 720
+    const val RTC_FPS = 15
+    const val RTC_MAX_BITRATE = 2_500_000
+    const val RTC_MIN_BITRATE = 1_200_000
 
     const val SKILL_NONE = "none"
     const val SKILL_BROWSE = "browse"
@@ -105,6 +110,51 @@ object NavProtocol {
             .put("index", index)
             .put("candidate", candidate)
             .toString()
+    }
+
+    fun p2pOfferJson(offer: P2pOffer): String {
+        return JSONObject()
+            .put("ssid", offer.ssid)
+            .put("pass", offer.passphrase)
+            .put("goIp", offer.goIp)
+            .put("mac", offer.goMac)
+            .put("name", offer.goName)
+            .toString()
+    }
+
+    fun parseP2pOffer(raw: String?): P2pOffer? {
+        if (raw.isNullOrBlank()) return null
+        return try {
+            val obj = JSONObject(raw)
+            val ssid = obj.optString("ssid")
+            val pass = obj.optString("pass")
+            if (ssid.isBlank() || pass.isBlank()) {
+                null
+            } else {
+                P2pOffer(
+                    ssid = ssid,
+                    passphrase = pass,
+                    goIp = obj.optString("goIp"),
+                    goMac = obj.optString("mac"),
+                    goName = obj.optString("name"),
+                )
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun p2pReadyJson(ip: String): String {
+        return JSONObject().put("ip", ip).toString()
+    }
+
+    fun parseP2pReady(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        return try {
+            JSONObject(raw).optString("ip")
+        } catch (_: Exception) {
+            ""
+        }
     }
 
     fun parseRtcIce(raw: String?): Triple<String, Int, String>? {
@@ -225,8 +275,16 @@ object NavProtocol {
         )
     }
 
-    val indoorScript: List<NavHint> = scriptFor("海底捞三里屯店", 40)
+    val indoorScript: List<NavHint> = emptyList()
 }
+
+data class P2pOffer(
+    val ssid: String,
+    val passphrase: String,
+    val goIp: String = "",
+    val goMac: String = "",
+    val goName: String = "",
+)
 
 data class NavHint(
     val turn: String = "straight",

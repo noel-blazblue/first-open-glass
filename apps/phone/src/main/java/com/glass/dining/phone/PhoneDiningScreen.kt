@@ -72,7 +72,7 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
         TalkButton(talking = state.talking) { viewModel.toggleTalk() }
         Spacer(Modifier.height(8.dp))
         ActionButton(
-            if (state.rtcOn) "关闭视频流" else "开视频流（探针）",
+            if (state.rtcOn) "关闭眼镜画面" else "开眼镜画面",
             Modifier.fillMaxWidth(),
         ) { viewModel.toggleRtc() }
         if (state.rtcOn || state.rtcLine.isNotBlank()) {
@@ -96,17 +96,14 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
         }
         Spacer(Modifier.height(12.dp))
 
-        Text("商圈", color = TextMain, fontSize = 14.sp)
-        Row(
-            modifier = Modifier
-                .horizontalScroll(rememberScrollState())
-                .padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            state.scenes.forEach { scene ->
-                val selected = scene.id == state.sceneId
-                Chip(scene.name, selected) { viewModel.selectScene(scene.id) }
-            }
+        Text(
+            "已加载 ${state.storeCount} 家门店。数据来自门店录入 App，改完切回即可。",
+            color = TextDim,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        ActionButton("刷新门店目录", Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            viewModel.reloadCatalog()
         }
 
         Spacer(Modifier.height(16.dp))
@@ -184,11 +181,11 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
         state.match?.store?.let { StoreDetail(it) }
 
         Spacer(Modifier.height(16.dp))
-        Text("Debug 强制命中", color = TextMain, fontSize = 14.sp)
+        Text("已录入门店", color = TextMain, fontSize = 14.sp)
         Column(modifier = Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             viewModel.currentStores().forEach { store ->
                 val selected = store.id == state.match?.store?.id
-                Chip("${store.shortName} · ${store.distanceMeters}m", selected) {
+                Chip("${store.shortName} · ${if (store.distanceMeters > 0) "${store.distanceMeters}m" else "测距中"}", selected) {
                     viewModel.look(store.id)
                 }
             }

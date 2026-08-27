@@ -7,6 +7,7 @@ enum class VisionIntent {
     READ_SIGN,
     READ_MENU,
     CHECKOUT,
+    SCAN_COUPON,
 }
 
 enum class VisionScene {
@@ -81,6 +82,7 @@ data class VisionOutcome(
     val barcodeType: String? = null,
     val merchantHint: String = "",
     val tableHint: String = "",
+    val couponHint: String = "",
     val matchedStoreId: String? = null,
     val matchedStoreName: String? = null,
     val candidateNames: List<String> = emptyList(),
@@ -137,6 +139,7 @@ object VisionPolicy {
                 ocrText = extract.ocrText,
                 fastSpeak = "没扫到付款码，请对准二维码再试。",
             )
+            VisionIntent.SCAN_COUPON -> scanCoupon(extract, ranked, scene)
             VisionIntent.LOOK_STORE -> lookStore(extract, ranked, unique, scene)
             VisionIntent.READ_SIGN -> readSign(extract, ranked, unique, scene)
             VisionIntent.READ_MENU -> readMenu(extract, ranked, scene)
@@ -233,12 +236,31 @@ object VisionPolicy {
         return upload(VisionIntent.READ_MENU, extract, ranked, VisionScene.MENU, "菜单排版不完整", preferRoi = false)
     }
 
+    private fun scanCoupon(
+        extract: LocalExtract,
+        ranked: List<ScoredStore>,
+        scene: VisionScene,
+    ): VisionOutcome {
+        if (extract.ocrText.replace("\\s".toRegex(), "").length >= SIGN_MIN_CHARS) {
+            return upload(VisionIntent.SCAN_COUPON, extract, ranked, scene, "券面有字但没扫到码", preferRoi = false)
+        }
+        return VisionOutcome(
+            intent = VisionIntent.SCAN_COUPON,
+            scene = VisionScene.UNKNOWN,
+            decision = VisionDecision.RECAPTURE,
+            reason = "没扫到券码，请对准券上的二维码",
+            ocrText = extract.ocrText,
+            fastSpeak = "没扫到券码，请对准再试。",
+        )
+    }
+
     private fun qrOutcome(intent: VisionIntent, extract: LocalExtract, barcode: BarcodeHit): VisionOutcome {
         val hint = merchantFromQr(barcode.payload)
         val table = tableFromQr(barcode.payload)
         val speak = when (barcode.kind) {
             "pay" -> "扫到${barcode.safeType}付款码"
             "table" -> "这是桌码，不是付款码"
+            "coupon" -> "扫到团购券码"
             else -> "扫到二维码"
         }
         return VisionOutcome(
@@ -251,6 +273,7 @@ object VisionPolicy {
             barcodeType = barcode.safeType,
             merchantHint = hint,
             tableHint = table,
+            couponHint = couponFromQr(barcode.payload),
             fastSpeak = speak,
         )
     }
@@ -289,7 +312,7 @@ object VisionPolicy {
             VisionIntent.READ_MENU -> VisionScene.MENU
             VisionIntent.READ_SIGN -> if (unique) VisionScene.STORE_SIGN else VisionScene.STREET_SIGN
             VisionIntent.LOOK_STORE -> if (extract.ocrText.isNotBlank()) VisionScene.STORE_SIGN else VisionScene.UNKNOWN
-            VisionIntent.CHECKOUT -> VisionScene.QR_CODE
+            VisionIntent.CHECKOUT, VisionIntent.SCAN_COUPON -> VisionScene.QR_CODE
         }
     }
 
@@ -321,6 +344,9 @@ object VisionPolicy {
         if (listOf("table", "desk", "zhuohao", "mtcoupon://table").any { p.contains(it) }) {
             return "table"
         }
+        if (listOf("mtcoupon", "coupon", "voucher", "dianping.com/coupon", "meituan.com/coupon").any { p.contains(it) }) {
+            return "coupon"
+        }
         return "other"
     }
 
@@ -344,9 +370,15 @@ object VisionPolicy {
         return match.groupValues[1]
     }
 
+    fun couponFromQr(payload: String): String {
+        val match = COUPON_IN_QR.find(payload) ?: return ""
+        return match.groupValues[1]
+    }
+
     private val PRICE = Regex("""[¥￥]\s*\d+|\d+(\.\d+)?\s*元""")
     private val STORE_IN_QR = Regex("""(?:(?:store|poi|merchant)=|mtpay://)([a-z0-9_]+)""", RegexOption.IGNORE_CASE)
     private val TABLE_IN_QR = Regex("""(?:table|desk|zhuohao)=([a-z0-9_-]+)""", RegexOption.IGNORE_CASE)
+    private val COUPON_IN_QR = Regex("""(?:coupon_id|coupon|voucher)=([a-z0-9_]+)""", RegexOption.IGNORE_CASE)
 }
 
 object ImageQuality {
@@ -430,5 +462,28 @@ object ImageQuality {
             varSum += d * d
         }
         return varSum / values.size
+    }
+
+    fun signBand(width: Int, height: Int, gray: ByteArray): Float {
+        if (width < 8 || height < 8 || gray.size < width * height) return 0f
+        val topH = (height * 0.7f).toInt().coerceAtLeast(3)
+        val rowMean = FloatArray(topH)
+        for (y in 0 until topH) {
+            var sum = 0
+            val row = y * width
+            for (x in 0 until width) {
+                sum += gray[row + x].toInt() and 0xff
+            }
+            rowMean[y] = sum.toFloat() / width
+        }
+        var best = 0f
+        for (y in 1 until topH - 1) {
+            val contrast = kotlin.math.abs(rowMean[y] - rowMean[y - 1]) +
+                kotlin.math.abs(rowMean[y] - rowMean[y + 1])
+            val bright = (rowMean[y] / 255f).coerceIn(0f, 1f)
+            val local = (contrast / 90f).coerceIn(0f, 1f) * 0.55f + bright * 0.45f
+            if (local > best) best = local
+        }
+        return best.coerceIn(0f, 1f)
     }
 }

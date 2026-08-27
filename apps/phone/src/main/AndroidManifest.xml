@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <permission
+        android:name="com.glass.dining.STORE_CATALOG"
+        android:protectionLevel="signature" />
+
+    <uses-permission android:name="com.glass.dining.STORE_CATALOG" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -40,6 +45,8 @@
 
     <queries>
         <package android:name="com.rokid.sprite.aiapp" />
+        <package android:name="com.glass.dining.store" />
+        <provider android:authorities="com.glass.dining.store.catalog" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
         </intent>

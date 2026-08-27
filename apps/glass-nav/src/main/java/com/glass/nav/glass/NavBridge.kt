@@ -85,6 +85,8 @@ class NavBridge(
                 NavProtocol.CMD_RTC_STOP,
                 NavProtocol.CMD_RTC_SDP,
                 NavProtocol.CMD_RTC_ICE,
+                NavProtocol.CMD_P2P_OFFER,
+                NavProtocol.CMD_P2P_STOP,
                 -> main.post { onRtc(cmd, readString(args, 1)) }
             }
         }

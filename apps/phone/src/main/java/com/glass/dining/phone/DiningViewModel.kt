@@ -1,6 +1,8 @@
 package com.glass.dining.phone
 
 import android.app.Application
+import android.database.ContentObserver
+import android.net.Uri
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Handler
@@ -15,23 +17,29 @@ import com.glass.dining.phone.nav.NavLocationService
 import com.glass.dining.phone.nav.PhoneGps
 import com.glass.dining.phone.nav.StorePins
 import com.glass.dining.phone.nav.WalkGuide
+import com.glass.dining.phone.vision.LocalVision
+import com.glass.dining.phone.vision.SceneVision
+import com.glass.dining.phone.vision.StreamFrame
+import com.glass.dining.phone.vision.StreamVision
 import com.glass.dining.phone.vision.VisionRouter
+import com.glass.dining.shared.catalog.MemoryStoreCatalog
+import com.glass.dining.shared.catalog.StoreGeo
 import com.glass.dining.shared.engine.DiningSession
 import com.glass.dining.shared.engine.StoreVision
 import com.glass.dining.shared.hud.HudCard
-import com.glass.dining.shared.mock.MockCatalog
 import com.glass.dining.shared.mock.MockCommerce
 import com.glass.dining.shared.model.ActiveSkill
 import com.glass.dining.shared.model.MatchResult
 import com.glass.dining.shared.model.MenuItem
 import com.glass.dining.shared.model.QaResult
-import com.glass.dining.shared.model.Scene
 import com.glass.dining.shared.model.Store
 import com.glass.dining.shared.nav.NavHint
 import com.glass.dining.shared.nav.NavProtocol
+import com.glass.dining.shared.vision.StoreHypothesis
 import com.glass.dining.shared.vision.VisionDecision
 import com.glass.dining.shared.vision.VisionIntent
 import com.glass.dining.shared.vision.VisionOutcome
+import com.glass.dining.shared.vision.VisionSkill
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -42,12 +50,12 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.zip.CRC32
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 data class PhoneUiState(
     val status: String = "连上眼镜后会自动听。点按钮可暂停。",
-    val scenes: List<Scene> = MockCatalog.scenes,
-    val sceneId: String = MockCatalog.defaultSceneId,
+    val storeCount: Int = 0,
     val card: HudCard = HudCard.idle(),
     val match: MatchResult? = null,
     val lastQa: QaResult? = null,
@@ -85,6 +93,22 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile private var announcedArrive: Boolean = false
     @Volatile private var lastRerouteAt: Long = 0
     @Volatile private var capturing: Boolean = false
+    @Volatile private var rtcKickSent: Boolean = false
+    @Volatile private var lastP2pError: String? = null
+    private val visionWait = AtomicReference<CountDownLatch?>(null)
+    @Volatile private var autoStoreHits: Int = 0
+    @Volatile private var autoStoreMisses: Int = 0
+    @Volatile private var autoStoreShownId: String? = null
+    @Volatile private var autoStoreFromVision: Boolean = false
+    @Volatile private var autoPrevCenter: Pair<Float, Float>? = null
+    @Volatile private var autoProbeUntil: Long = 0
+    private val autoProbeLock = AtomicBoolean(false)
+
+    private val catalogObserver = object : ContentObserver(main) {
+        override fun onChange(selfChange: Boolean, uri: Uri?) {
+            reloadCatalog()
+        }
+    }
 
     init {
         CxrLinkHost.onStatus = { line ->
@@ -104,12 +128,36 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         PhoneRtc.onSignal = { cmd, json -> CxrLinkHost.sendRtc(cmd, json) }
         PhoneRtc.onStatus = { line ->
             _ui.update { it.copy(status = line, rtcLine = line) }
+            if (PhoneRtc.hasFreshFrame()) {
+                visionWait.get()?.countDown()
+            }
+            if (line.contains("ICE 失败")) {
+                lastP2pError = line
+                visionWait.get()?.countDown()
+            }
         }
+        PhoneP2p.onStatus = { line ->
+            _ui.update { it.copy(status = line, rtcLine = line) }
+        }
+        StreamVision.onSample = { frame -> maybeAutoLookStore(frame) }
         val model = PhoneAi.statusLine
         _ui.update { it.copy(status = "连上眼镜后会自动听。说想吃什么。$model") }
+        try {
+            getApplication<Application>().contentResolver.registerContentObserver(
+                PhoneCatalog.uri(),
+                true,
+                catalogObserver,
+            )
+        } catch (_: Exception) {
+        }
+        reloadCatalog()
     }
 
     override fun onCleared() {
+        try {
+            getApplication<Application>().contentResolver.unregisterContentObserver(catalogObserver)
+        } catch (_: Exception) {
+        }
         main.removeCallbacks(unmuteAfterTts)
         stopTalk(speak = false)
         stopNavInternal(silent = true)
@@ -124,6 +172,8 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         CxrLinkHost.onRtc = null
         PhoneRtc.onSignal = null
         PhoneRtc.onStatus = null
+        PhoneP2p.onStatus = null
+        StreamVision.onSample = null
         stopRtcInternal()
         super.onCleared()
     }
@@ -134,33 +184,248 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleRtc() {
         if (_ui.value.rtcOn) {
-            stopRtcInternal()
-            setStatus("已关视频流")
+            stopRtcInternal("已关视频流")
             return
         }
         if (!CxrLinkHost.linkReady()) {
             setStatus("还没连上眼镜，无法开视频流")
             return
         }
-        _ui.update { it.copy(rtcOn = true, rtcLine = "正在开视频流…", status = "正在开视频流…") }
+        beginRtc()
+    }
+
+    private fun beginRtc() {
+        lastP2pError = null
+        _ui.update { it.copy(rtcOn = true, rtcLine = "正在建 Wi-Fi Direct…", status = "正在建 Wi-Fi Direct…") }
+        rtcKickSent = false
         viewModelScope.launch(Dispatchers.IO) {
             PhoneRtc.prepare(getApplication())
-            main.post {
-                CxrLinkHost.sendRtc(NavProtocol.CMD_RTC_START)
-                main.removeCallbacks(rtcReadyTimeout)
-                main.postDelayed(rtcReadyTimeout, 8_000)
+            main.post { startP2pThenRtc() }
+        }
+    }
+
+    private fun kickOpenVisionStream() {
+        if (PhoneRtc.hasFreshFrame() || _ui.value.rtcOn) return
+        if (!CxrLinkHost.linkReady()) return
+        main.post {
+            if (_ui.value.rtcOn || PhoneRtc.hasFreshFrame()) return@post
+            beginRtc()
+        }
+    }
+
+    private fun maybeAutoLookStore(frame: StreamFrame) {
+        if (asking || capturing) return
+        when (session.activeSkill) {
+            ActiveSkill.NAV, ActiveSkill.MENU, ActiveSkill.COUPON, ActiveSkill.PAY -> return
+            else -> Unit
+        }
+        if (session.pendingPay != null || session.pendingCoupon != null) return
+        if (!frame.extract.quality.ok) return
+        val width = frame.extract.width
+        val height = frame.extract.height
+        if (width <= 0 || height <= 0) return
+        val band = frame.bitmap?.let { LocalVision.signBand(it) } ?: 0f
+        val hyp = StoreHypothesis.score(
+            width = width,
+            height = height,
+            ocr = frame.extract.ocr,
+            band = band,
+            prevCenter = autoPrevCenter,
+            gpsBoost = gpsNearEnteredStore(),
+        )
+        autoPrevCenter = hyp.centerX to hyp.centerY
+        if (hyp.score < StoreHypothesis.THRESHOLD) {
+            if (autoStoreHits > 0) {
+                Log.i(TAG, "auto hyp drop ${"%.2f".format(hyp.score)} ${hyp.reason}")
+            }
+            autoStoreHits = 0
+            noteAutoStoreMiss("hyp ${"%.2f".format(hyp.score)}")
+            return
+        }
+        autoStoreMisses = 0
+        autoStoreHits += 1
+        Log.i(
+            TAG,
+            "auto hyp ${"%.2f".format(hyp.score)} hits=$autoStoreHits ${hyp.reason} " +
+                "ocr=${frame.extract.ocrText.replace("\n", " ").take(40)}",
+        )
+        val now = SystemClock.elapsedRealtime()
+        if (autoStoreHits < StoreHypothesis.CONFIRM_HITS) return
+        if (now < autoProbeUntil || autoProbeLock.get()) return
+        if (!autoProbeLock.compareAndSet(false, true)) return
+        autoProbeUntil = now + StoreHypothesis.COOLDOWN_MS
+        autoStoreHits = 0
+        val jpeg = frame.jpeg.copyOf()
+        val ocrHint = frame.extract.ocrText.replace("\n", " ").trim()
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (!PhoneAi.ready) {
+                    Log.i(TAG, "auto probe skip: no key")
+                    return@launch
+                }
+                val subject = LocalVision.subjectJpeg(jpeg)
+                val reply = PhoneAi.probeStore(subject, ocrHint)
+                Log.i(
+                    TAG,
+                    "auto probe isStore=${reply?.isStore} store=${reply?.store.orEmpty()} " +
+                        "conf=${reply?.confidence ?: 0f} speak=${reply?.speak.orEmpty().take(24)}",
+                )
+                if (reply == null) return@launch
+                if (!reply.isStore) {
+                    main.post { dismissVisionStore("probe false") }
+                    return@launch
+                }
+                main.post { applyAutoProbe(reply) }
+            } catch (error: Exception) {
+                Log.w(TAG, "auto probe failed: ${error.message}")
+            } finally {
+                autoProbeLock.set(false)
             }
         }
     }
 
+    private fun noteAutoStoreMiss(reason: String) {
+        if (!autoStoreFromVision) {
+            autoStoreMisses = 0
+            return
+        }
+        autoStoreMisses += 1
+        Log.i(TAG, "auto hyp miss $autoStoreMisses/${StoreHypothesis.DISMISS_HITS} $reason")
+        if (autoStoreMisses < StoreHypothesis.DISMISS_HITS) return
+        dismissVisionStore(reason)
+    }
+
+    private fun dismissVisionStore(reason: String) {
+        val run = {
+            if (autoStoreFromVision && !asking && !capturing) {
+                when (session.activeSkill) {
+                    ActiveSkill.NAV, ActiveSkill.MENU, ActiveSkill.COUPON, ActiveSkill.PAY -> Unit
+                    else -> {
+                        session.clearLook()
+                        autoStoreShownId = null
+                        autoStoreFromVision = false
+                        autoStoreMisses = 0
+                        autoStoreHits = 0
+                        autoProbeUntil = 0
+                        val card = if (_ui.value.talking) HudCard.listening() else HudCard.idle()
+                        _ui.update {
+                            it.copy(
+                                match = null,
+                                card = card,
+                                skill = ActiveSkill.NONE,
+                                status = "眼前没有店了",
+                            )
+                        }
+                        CxrLinkHost.showCard(card)
+                        Log.i(TAG, "auto store dismiss $reason")
+                    }
+                }
+            }
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) run() else main.post(run)
+    }
+
+    private fun rememberVisionStore(id: String) {
+        autoStoreShownId = id
+        autoStoreFromVision = true
+        autoStoreMisses = 0
+    }
+
+    private fun rememberSpokenStore() {
+        autoStoreFromVision = false
+        autoStoreMisses = 0
+    }
+
+    private fun gpsNearEnteredStore(): Boolean {
+        val here = PhoneGps.last ?: return false
+        return session.catalog.stores().any { store ->
+            StoreGeo.hasCoords(store) &&
+                StoreGeo.haversineMeters(here.lat, here.lng, store.lat, store.lng) <
+                StoreHypothesis.GPS_BOOST_METERS
+        }
+    }
+
+    private fun applyAutoProbe(reply: AiReply) {
+        if (asking || capturing) return
+        when (session.activeSkill) {
+            ActiveSkill.NAV, ActiveSkill.MENU, ActiveSkill.COUPON, ActiveSkill.PAY -> return
+            else -> Unit
+        }
+        val hint = reply.store.ifBlank { reply.speak }.trim()
+        if (hint.isBlank()) return
+        val matched = StoreVision.matchStore(session.catalog.stores(), hint)
+        if (matched != null) {
+            rememberVisionStore(matched.id)
+            if (matched.id == session.currentStore?.id) return
+            val result = session.look(forceStoreId = matched.id, visionHint = hint) ?: return
+            publishAutoMatch(result)
+            return
+        }
+        val key = "name:${hint.take(24)}"
+        if (key == autoStoreShownId) {
+            rememberVisionStore(key)
+            return
+        }
+        rememberVisionStore(key)
+        val talk = reply.speak.ifBlank { "眼前是${hint.take(16)}" }
+        publishVision(AiReply(talk, talk.take(16), true, hint, true, reply.confidence))
+    }
+
+    private fun startP2pThenRtc() {
+        PhoneP2p.start(getApplication()) { offer ->
+            if (!_ui.value.rtcOn) return@start
+            if (offer != null) {
+                CxrLinkHost.sendRtc(
+                    NavProtocol.CMD_P2P_OFFER,
+                    NavProtocol.p2pOfferJson(offer),
+                )
+                setStatus("已发 Direct 给眼镜，等加入")
+                main.removeCallbacks(p2pJoinTimeout)
+                main.postDelayed(p2pJoinTimeout, 22_000)
+            } else {
+                abortP2p("Direct 没建起来")
+            }
+        }
+    }
+
+    private val p2pJoinTimeout = Runnable {
+        if (_ui.value.rtcOn && !PhoneRtc.active) {
+            abortP2p("眼镜没加入 Direct。USB 插着时常会关掉眼镜 Wi-Fi，请拔线后重试")
+        }
+    }
+
+    private fun abortP2p(reason: String) {
+        lastP2pError = reason
+        stopRtcInternal(reason)
+        visionWait.get()?.countDown()
+        Log.w("DiningViewModel", "p2p abort: $reason")
+    }
+
+    private fun startRtcOnP2pReady(reason: String) {
+        if (rtcKickSent) return
+        rtcKickSent = true
+        main.removeCallbacks(p2pJoinTimeout)
+        setStatus(reason)
+        CxrLinkHost.sendRtc(NavProtocol.CMD_RTC_START)
+        main.removeCallbacks(rtcReadyTimeout)
+        main.postDelayed(rtcReadyTimeout, 8_000)
+    }
+
     private val rtcReadyTimeout = Runnable {
         if (_ui.value.rtcOn && !PhoneRtc.active) {
-            setStatus("眼镜 8s 没 rtc.ready。需要重装眼镜 APK，且眼镜要能上网（同一 Wi-Fi 或热点）")
+            setStatus("眼镜 8s 没 rtc.ready")
         }
     }
 
     private fun onRtc(cmd: String, json: String?) {
         when (cmd) {
+            NavProtocol.CMD_P2P_READY -> {
+                val ip = NavProtocol.parseP2pReady(json)
+                startRtcOnP2pReady(if (ip.isBlank()) "眼镜已加入 Direct" else "眼镜已加入 Direct $ip")
+            }
+            NavProtocol.CMD_P2P_FAIL -> {
+                abortP2p("Direct 失败: ${json.orEmpty().ifBlank { "unknown" }}")
+            }
             NavProtocol.CMD_RTC_READY -> {
                 main.removeCallbacks(rtcReadyTimeout)
                 PhoneRtc.startOffer()
@@ -170,17 +435,31 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             NavProtocol.CMD_RTC_STAT -> {
                 val line = json?.take(80).orEmpty()
                 if (line.isNotBlank()) {
-                    _ui.update { it.copy(rtcLine = line) }
+                    _ui.update { it.copy(status = line, rtcLine = line) }
                 }
             }
         }
     }
 
-    private fun stopRtcInternal() {
+    private fun stopRtcInternal(line: String? = null) {
         main.removeCallbacks(rtcReadyTimeout)
+        main.removeCallbacks(p2pJoinTimeout)
         PhoneRtc.stop()
+        PhoneP2p.stop()
+        rtcKickSent = false
+        autoStoreHits = 0
+        autoStoreMisses = 0
+        autoStoreShownId = null
+        autoPrevCenter = null
         CxrLinkHost.sendRtc(NavProtocol.CMD_RTC_STOP)
-        _ui.update { it.copy(rtcOn = false) }
+        CxrLinkHost.sendRtc(NavProtocol.CMD_P2P_STOP)
+        _ui.update { state ->
+            state.copy(
+                rtcOn = false,
+                status = line ?: state.status,
+                rtcLine = line ?: state.rtcLine,
+            )
+        }
     }
 
     fun toggleTalk() {
@@ -193,28 +472,29 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun selectScene(id: String) {
-        stopNavInternal(silent = true)
-        session.setScene(id)
-        val card = HudCard.idle()
-        _ui.update {
-            it.copy(
-                sceneId = id,
-                match = null,
-                lastQa = null,
-                card = card,
-                photo = null,
-                skill = ActiveSkill.NONE,
-                navHint = null,
-            )
+    fun reloadCatalog() {
+        val app = getApplication<Application>()
+        val origin = PhoneGps.last
+        val stores = StoreGeo.applyDistances(PhoneCatalog.load(app), origin?.lat, origin?.lng)
+        session.replaceCatalog(MemoryStoreCatalog(stores))
+        val line = if (stores.isEmpty()) {
+            "还没有门店。请先用「门店录入」在店门口记录经纬度。"
+        } else {
+            "已加载 ${stores.size} 家门店。"
         }
-        CxrLinkHost.showCard(card)
+        _ui.update { it.copy(storeCount = stores.size, status = line) }
     }
 
     fun look(forceStoreId: String? = null) {
         if (!forceStoreId.isNullOrBlank()) {
             stopNavInternal(silent = true)
-            publishMatch(session.look(forceStoreId), "已强制命中")
+            val result = session.look(forceStoreId)
+            if (result == null) {
+                setStatus("目录里没有这家店")
+            } else {
+                rememberSpokenStore()
+                publishMatch(result, "已强制命中")
+            }
             return
         }
         if (session.activeSkill == ActiveSkill.NAV) {
@@ -225,7 +505,13 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
     fun next() {
         stopNavInternal(silent = true)
-        publishMatch(session.next(), "已切换下一家")
+        val result = session.next()
+        if (result == null) {
+            setStatus("还没有门店，请先用门店 App 录入")
+        } else {
+            rememberSpokenStore()
+            publishMatch(result, "已切换下一家")
+        }
     }
 
     fun onHeard(spoken: String) {
@@ -298,7 +584,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun currentStores(): List<Store> {
-        return MockCatalog.sceneById(_ui.value.sceneId).stores
+        return session.catalog.stores()
     }
 
     private fun startTalk() {
@@ -334,6 +620,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             Log.i(TAG, "talk on: $mic")
+            kickOpenVisionStream()
             main.postDelayed({
                 if (!_ui.value.talking) return@postDelayed
                 if (CxrLinkHost.pcmPackets > 0) return@postDelayed
@@ -379,9 +666,10 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     private fun shootSpeak(intent: VisionIntent): String {
         return when (intent) {
             VisionIntent.CHECKOUT -> "对准付款码"
+            VisionIntent.SCAN_COUPON -> "对准券码"
             VisionIntent.READ_MENU -> "我看一下菜单"
             VisionIntent.READ_SIGN -> "我看一下"
-            else -> "正在拍照"
+            else -> "我看一下"
         }
     }
 
@@ -403,7 +691,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     private fun failCapture(reason: String): String {
         Log.w(TAG, "capture failed: $reason")
         asking = false
-        val card = failCard("拍照失败")
+        val card = failCard("看画面失败")
         main.post {
             _ui.update {
                 it.copy(
@@ -423,55 +711,108 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun processVision(intent: VisionIntent, spatial: Boolean = false): String {
         if (capturing) {
-            return JSONObject().put("ok", false).put("error", "正在拍照").toString()
+            return JSONObject().put("ok", false).put("error", "正在看眼前画面").toString()
         }
         capturing = true
         try {
-            if (_ui.value.rtcOn || PhoneRtc.active) {
-                stopRtcInternal()
-                Thread.sleep(800)
-            }
-            if (intent == VisionIntent.LOOK_STORE && session.activeSkill == ActiveSkill.NAV) {
-                val current = session.lastMatch
-                if (current != null) {
-                    return storeFactsJson(current, null)
-                        .put("note", "正在导航，没有再拍照，这是当前目的店")
-                        .toString()
-                }
-            }
             main.post { showShooting(intent) }
-            if (!CxrLinkHost.canTakePhoto()) {
-                return failCapture("眼镜未连上，无法拍照。请先用乐奇连上这副眼镜。")
+            val streamError = ensureStreamForVision()
+            if (streamError != null) {
+                return failCapture(streamError)
             }
-            val (bytes, error) = captureSync()
-            if (bytes == null) {
-                return failCapture(error ?: "眼镜拍照失败")
+            val stores = session.catalog.stores()
+            val observe = SceneVision.observe(intent, stores, spatial, "stream") {
+                grabVisionJpeg()
             }
-            val scene = MockCatalog.sceneById(_ui.value.sceneId)
-            val (bitmap, outcome) = VisionRouter.analyze(bytes, intent, scene, spatial)
-            main.post { _ui.update { it.copy(photo = bitmap, recognizing = false) } }
-            if (outcome.needsRecapture) {
-                return failCapture(outcome.reason)
+            main.post { _ui.update { it.copy(photo = observe.bitmap, recognizing = false) } }
+            if (observe.jpeg.isEmpty() && observe.outcome.needsRecapture) {
+                return failCapture(observe.outcome.reason)
             }
+            if (observe.outcome.needsRecapture) {
+                return failCapture(observe.outcome.reason)
+            }
+            val jpeg = observe.jpeg
+            val outcome = observe.outcome
+            Log.i(TAG, "vision source=stream intent=$intent decision=${outcome.decision} route=${outcome.reason}")
             return when (intent) {
-                VisionIntent.CHECKOUT -> finishCheckoutScan(outcome)
-                VisionIntent.READ_MENU -> finishMenu(bytes, outcome)
-                VisionIntent.READ_SIGN -> finishSign(bytes, outcome)
-                VisionIntent.LOOK_STORE -> finishLookStore(bytes, outcome)
+                VisionIntent.CHECKOUT -> finishCheckoutScan(outcome, "stream")
+                VisionIntent.SCAN_COUPON -> finishScanCoupon(jpeg, outcome, "stream")
+                VisionIntent.READ_MENU -> finishMenu(jpeg, outcome, "stream")
+                VisionIntent.READ_SIGN -> finishSign(jpeg, outcome, "stream")
+                VisionIntent.LOOK_STORE -> finishLookStore(jpeg, outcome, "stream")
             }
         } finally {
             capturing = false
         }
     }
 
-    private fun finishLookStore(jpeg: ByteArray, outcome: VisionOutcome): String {
+    private fun ensureStreamForVision(): String? {
+        if (PhoneRtc.hasFreshFrame()) return null
+        if (!CxrLinkHost.linkReady()) {
+            return "眼镜未连上，无法看画面。请先用乐奇连上这副眼镜。"
+        }
+        lastP2pError = null
+        val latch = CountDownLatch(1)
+        visionWait.set(latch)
+        main.post {
+            if (PhoneRtc.hasFreshFrame()) {
+                latch.countDown()
+                return@post
+            }
+            if (!_ui.value.rtcOn) {
+                beginRtc()
+            }
+        }
+        val deadline = System.currentTimeMillis() + 22_000
+        while (System.currentTimeMillis() < deadline) {
+            if (PhoneRtc.hasFreshFrame()) {
+                visionWait.set(null)
+                return null
+            }
+            lastP2pError?.let {
+                visionWait.set(null)
+                return it
+            }
+            latch.await(200, TimeUnit.MILLISECONDS)
+        }
+        visionWait.set(null)
+        return lastP2pError ?: "Direct 没出画，没法抽帧"
+    }
+
+    private fun grabVisionJpeg(): Pair<ByteArray?, String?> {
+        val cached = StreamVision.latestJpeg()
+        if (cached != null) {
+            Log.i(TAG, "vision grab cache bytes=${cached.size}")
+            return cached to null
+        }
+        val jpeg = PhoneRtc.grabJpeg(2_500)
+        Log.i(TAG, "vision grab live bytes=${jpeg?.size ?: 0}")
+        return jpeg to if (jpeg == null) "视频流还没出画，请对准再试" else null
+    }
+
+    private fun finishLookStore(jpeg: ByteArray, outcome: VisionOutcome, source: String): String {
         val hint = outcome.matchedStoreName.orEmpty().ifBlank { outcome.ocrText }
         if (outcome.decision == VisionDecision.TEXT_ONLY && outcome.matchedStoreId != null) {
             val result = session.look(forceStoreId = outcome.matchedStoreId, visionHint = hint)
+            if (result == null) {
+                val talk = "画面像「${hint.take(24)}」。"
+                rememberVisionStore("name:${hint.take(24)}")
+                publishVision(AiReply(talk, talk.take(16), false, hint))
+                return JSONObject()
+                    .put("ok", true)
+                    .put("matched", false)
+                    .put("store", hint)
+                    .put("vision", talk)
+                    .put("vision_source", source)
+                    .put("hint", "直接告诉用户看到的店名，不要说请到真实门店。")
+                    .toString()
+            }
             selectedThisTurn = true
+            rememberVisionStore(result.store.id)
             publishMatch(result, "端侧OCR认店")
             return storeFactsJson(result, null)
                 .put("vision_route", outcome.reason)
+                .put("vision_source", source)
                 .toString()
         }
         val vision = if (outcome.needsLlm && PhoneAi.ready) {
@@ -480,39 +821,55 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
         val mergedHint = vision?.store.orEmpty().ifBlank { hint }.ifBlank { vision?.speak.orEmpty() }
-        val scene = MockCatalog.sceneById(_ui.value.sceneId)
-        val matched = StoreVision.matchStore(scene, mergedHint)
+        val matched = StoreVision.matchStore(session.catalog.stores(), mergedHint)
         return if (matched != null) {
             val result = session.look(visionHint = mergedHint)
+            if (result == null) {
+                val talk = vision?.speak?.ifBlank { "画面像「${mergedHint.take(24)}」。" }
+                    ?: "画面像「${mergedHint.take(24)}」。"
+                rememberVisionStore("name:${mergedHint.take(24)}")
+                publishVision(AiReply(talk, talk.take(16), vision?.fromLlm == true, mergedHint))
+                return JSONObject()
+                    .put("ok", true)
+                    .put("matched", false)
+                    .put("store", mergedHint)
+                    .put("vision", talk)
+                    .put("vision_source", source)
+                    .put("hint", "直接告诉用户看到的店名，不要说请到真实门店。")
+                    .toString()
+            }
             selectedThisTurn = true
+            rememberVisionStore(result.store.id)
             publishMatch(result, "视觉认店")
             storeFactsJson(result, vision)
                 .put("vision_route", outcome.reason)
-                .toString()
-        } else if (vision != null && vision.fromLlm) {
-            publishVision(vision)
-            JSONObject()
-                .put("ok", false)
-                .put("vision", vision.speak)
-                .put("store", vision.store)
-                .put("vision_route", outcome.reason)
-                .toString()
-        } else if (outcome.ocrText.isNotBlank()) {
-            val talk = "看到「${outcome.ocrText.take(16)}」，还对不上店。"
-            publishVision(AiReply(talk, talk.take(16), false))
-            JSONObject()
-                .put("ok", false)
-                .put("ocr", outcome.ocrText.take(80))
-                .put("vision_route", outcome.reason)
+                .put("vision_source", source)
                 .toString()
         } else {
-            val result = session.look(imageFingerprint = fingerprintOf(jpeg))
-            publishMatch(result, "指纹回退")
-            storeFactsJson(result, null).put("vision_route", "fingerprint_fallback").toString()
+            val seen = vision?.store.orEmpty().ifBlank { outcome.ocrText }.trim()
+            val talk = when {
+                vision != null && vision.fromLlm && vision.speak.isNotBlank() -> vision.speak
+                seen.isNotBlank() -> "画面上像是「${seen.take(24)}」。"
+                else -> "这帧没读出店名，换个角度再看一次。"
+            }
+            if (seen.isNotBlank()) {
+                rememberVisionStore("name:${seen.take(24)}")
+            }
+            publishVision(AiReply(talk, talk.take(16), vision?.fromLlm == true, seen))
+            JSONObject()
+                .put("ok", seen.isNotBlank() || (vision?.fromLlm == true))
+                .put("matched", false)
+                .put("store", seen)
+                .put("vision", talk)
+                .put("ocr", outcome.ocrText.take(80))
+                .put("vision_route", outcome.reason)
+                .put("vision_source", source)
+                .put("hint", "已从画面认店。直接告诉用户看到的店名。不要说请到真实门店，也不要说请先录入。只有用户要导航且目录没有这家时才说带不了路。")
+                .toString()
         }
     }
 
-    private fun finishSign(jpeg: ByteArray, outcome: VisionOutcome): String {
+    private fun finishSign(jpeg: ByteArray, outcome: VisionOutcome, source: String): String {
         val text = if (outcome.needsLlm && PhoneAi.ready) {
             PhoneAi.look(VisionRouter.bytesForLlm(jpeg, outcome), "read_sign", outcome.ocrText).speak
         } else {
@@ -522,15 +879,19 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             .put("ok", text.isNotBlank())
             .put("text", text.take(120))
             .put("vision_route", outcome.reason)
+            .put("vision_source", source)
             .put("note", "路牌只作辅助，路线仍以 GPS 和高德为准")
         if (session.activeSkill != ActiveSkill.NAV && outcome.matchedStoreId != null) {
             val result = session.look(forceStoreId = outcome.matchedStoreId)
-            selectedThisTurn = true
-            publishMatch(result, "路牌认店")
-            return storeFactsJson(result, null)
-                .put("text", text.take(120))
-                .put("vision_route", outcome.reason)
-                .toString()
+            if (result != null) {
+                selectedThisTurn = true
+                publishMatch(result, "路牌认店")
+                return storeFactsJson(result, null)
+                    .put("text", text.take(120))
+                    .put("vision_route", outcome.reason)
+                    .put("vision_source", source)
+                    .toString()
+            }
         }
         if (text.isBlank()) {
             json.put("ok", false).put("error", "路牌看不清")
@@ -538,7 +899,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         return json.toString()
     }
 
-    private fun finishMenu(jpeg: ByteArray, outcome: VisionOutcome): String {
+    private fun finishMenu(jpeg: ByteArray, outcome: VisionOutcome, source: String): String {
         if (session.currentStore == null && outcome.matchedStoreId != null) {
             session.look(forceStoreId = outcome.matchedStoreId)
         }
@@ -546,12 +907,12 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             return JSONObject().put("ok", false).put("error", "还没选定门店，先认店或推荐").toString()
         }
         val items = if (outcome.decision == VisionDecision.TEXT_ONLY && outcome.ocrText.isNotBlank()) {
-            parseMenuItems(outcome.ocrText).ifEmpty { MockCommerce.menuOf(session.currentStore!!.id) }
+            parseMenuItems(outcome.ocrText).ifEmpty { MockCommerce.menuOf(session.currentStore) }
         } else if (outcome.needsLlm && PhoneAi.ready) {
             val vision = PhoneAi.look(VisionRouter.bytesForLlm(jpeg, outcome), "read_menu", outcome.ocrText)
-            parseMenuItems(vision.speak + "\n" + outcome.ocrText).ifEmpty { MockCommerce.menuOf(session.currentStore!!.id) }
+            parseMenuItems(vision.speak + "\n" + outcome.ocrText).ifEmpty { MockCommerce.menuOf(session.currentStore) }
         } else {
-            MockCommerce.menuOf(session.currentStore!!.id)
+            MockCommerce.menuOf(session.currentStore)
         }
         val menu = session.startMenu(items)
         val card = HudCard.fromMenu(session.currentStore?.shortName.orEmpty(), menu)
@@ -560,18 +921,21 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             .put("ok", true)
             .put("store", session.currentStore?.shortName)
             .put("vision_route", outcome.reason)
+            .put("vision_source", source)
             .put("items", menu.joinToString("；") { "${it.name}¥${it.price}" })
             .toString()
     }
 
-    private fun finishCheckoutScan(outcome: VisionOutcome): String {
+    private fun finishCheckoutScan(outcome: VisionOutcome, source: String): String {
         if (outcome.barcodeKind == "table") {
             val table = outcome.tableHint
             val storeId = outcome.merchantHint
             if (storeId.isNotBlank()) {
                 val result = session.look(forceStoreId = storeId)
-                selectedThisTurn = true
-                publishMatch(result, "桌码认店")
+                if (result != null) {
+                    selectedThisTurn = true
+                    publishMatch(result, "桌码认店")
+                }
             }
             return JSONObject()
                 .put("ok", true)
@@ -580,6 +944,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 .put("store", session.currentStore?.shortName.orEmpty())
                 .put("note", "这是桌码，不是付款码，不能当成核销成功")
                 .put("vision_route", outcome.reason)
+                .put("vision_source", source)
                 .toString()
         }
         if (outcome.barcodeKind != "pay") {
@@ -587,6 +952,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 .put("ok", false)
                 .put("error", "没扫到付款码")
                 .put("vision_route", outcome.reason)
+                .put("vision_source", source)
                 .toString()
         }
         val synthetic = when (outcome.barcodeType) {
@@ -596,10 +962,11 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }
         val order = MockCommerce.payFromQr(
             payload = synthetic,
-            fallbackStoreId = session.currentStore?.id ?: outcome.merchantHint,
+            fallback = session.currentStore,
+            stores = session.catalog.stores(),
         )?.copy(qrType = outcome.barcodeType ?: "pay")
             ?: return JSONObject().put("ok", false).put("error", "付款码无法对应门店").toString()
-        if (session.currentStore == null && order.merchantId != "unknown_merchant") {
+        if (session.currentStore == null && order.merchantId.isNotBlank()) {
             session.look(forceStoreId = order.merchantId)
         }
         session.preparePay(order)
@@ -615,6 +982,87 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             .put("need_confirm", true)
             .put("note", "mock 支付，未向支付机构下单")
             .put("vision_route", outcome.reason)
+            .put("vision_source", source)
+            .toString()
+    }
+
+    private fun finishScanCoupon(jpeg: ByteArray, outcome: VisionOutcome, source: String): String {
+        if (outcome.barcodeKind == "table") {
+            return JSONObject()
+                .put("ok", true)
+                .put("kind", "table")
+                .put("table", outcome.tableHint)
+                .put("note", "这是桌码，不是券码，不能当成核销成功")
+                .put("vision_route", outcome.reason)
+                .put("vision_source", source)
+                .toString()
+        }
+        if (outcome.barcodeKind == "pay") {
+            return JSONObject()
+                .put("ok", false)
+                .put("kind", "pay")
+                .put("error", "这是付款码，请用买单而不是核销")
+                .put("vision_route", outcome.reason)
+                .put("vision_source", source)
+                .toString()
+        }
+        if (session.currentStore == null && outcome.merchantHint.isNotBlank()) {
+            session.look(forceStoreId = outcome.merchantHint)
+        }
+        if (session.currentStore == null) {
+            return JSONObject()
+                .put("ok", false)
+                .put("error", "还没选定门店，先认店再扫券")
+                .put("vision_source", source)
+                .toString()
+        }
+        if (session.lastCoupons.isEmpty()) {
+            session.listCoupons()
+        }
+        val titleHint = if (outcome.needsLlm && PhoneAi.ready) {
+            PhoneAi.look(VisionRouter.bytesForLlm(jpeg, outcome), "scan_coupon", outcome.ocrText).speak
+        } else {
+            outcome.ocrText.ifBlank { outcome.fastSpeak }.orEmpty()
+        }
+        val picked = session.lastCoupons.firstOrNull { coupon ->
+            outcome.couponHint.isNotBlank() && (
+                coupon.id.contains(outcome.couponHint) || outcome.couponHint.contains(coupon.id)
+            )
+        } ?: session.lastCoupons.firstOrNull { coupon ->
+            titleHint.isNotBlank() && (
+                coupon.title.contains(titleHint.take(8)) || titleHint.contains(coupon.title.take(4))
+            )
+        }
+        if (picked == null) {
+            val card = HudCard.fromCoupons(session.currentStore?.shortName.orEmpty(), session.lastCoupons)
+            publishSkillCard(card, ActiveSkill.COUPON, card.wait.ifBlank { "请选定一张券" }, "scan_coupon")
+            return JSONObject()
+                .put("ok", true)
+                .put("kind", "coupon")
+                .put("need_confirm", true)
+                .put("coupons", session.lastCoupons.joinToString("；") { "${it.id}:${it.title}¥${it.price}" })
+                .put("ocr", outcome.ocrText.take(80))
+                .put("message", "看到券面，请选定一张再确认核销")
+                .put("note", "扫码不等于核销成功")
+                .put("vision_route", outcome.reason)
+                .put("vision_source", source)
+                .toString()
+        }
+        session.prepareCoupon(picked.id)
+        val card = HudCard.fromCoupons(session.currentStore?.shortName.orEmpty(), listOf(picked))
+        publishSkillCard(card, ActiveSkill.COUPON, "确认后才核销${picked.title}", "scan_coupon")
+        return JSONObject()
+            .put("ok", true)
+            .put("kind", "coupon")
+            .put("need_confirm", true)
+            .put("coupon_id", picked.id)
+            .put("title", picked.title)
+            .put("price", picked.price)
+            .put("store", session.currentStore?.shortName)
+            .put("message", "看到${picked.title}，确认后才核销")
+            .put("note", "扫码不等于核销成功")
+            .put("vision_route", outcome.reason)
+            .put("vision_source", source)
             .toString()
     }
 
@@ -679,16 +1127,23 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         Log.i(TAG, "look ${result.store.id} $summary")
     }
 
-    private fun lookStoreForAi(): String {
-        return processVision(VisionIntent.LOOK_STORE)
-    }
-
-    private fun readSignForAi(): String {
-        return processVision(VisionIntent.READ_SIGN, spatial = isSpatial(_ui.value.question))
-    }
-
-    private fun readMenuForAi(): String {
-        return processVision(VisionIntent.READ_MENU)
+    private fun publishAutoMatch(result: MatchResult) {
+        val card = HudCard.fromMatch(result)
+        val line = "眼前是${result.store.shortName}"
+        _ui.update {
+            it.copy(
+                match = result,
+                card = card,
+                status = line,
+                recognizing = false,
+                skill = ActiveSkill.BROWSE,
+            )
+        }
+        CxrLinkHost.showCard(card)
+        if (!asking && !PhoneTts.speaking) {
+            PhoneTts.speak(line)
+        }
+        Log.i(TAG, "auto look hud ${result.store.id}")
     }
 
     private fun checkoutForAi(args: JSONObject): String {
@@ -767,19 +1222,6 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             .put("sequence_id", receipt.sequenceId)
             .put("message", receipt.message + "。这是演示回执，没有调美团验券接口")
             .toString()
-    }
-
-    private fun captureSync(): Pair<ByteArray?, String?> {
-        val latch = CountDownLatch(1)
-        var bytes: ByteArray? = null
-        var error: String? = "眼镜拍照超时"
-        CxrLinkHost.takePhoto { data, err ->
-            bytes = data
-            error = err
-            latch.countDown()
-        }
-        val ok = latch.await(15, TimeUnit.SECONDS)
-        return if (ok) bytes to error else null to "眼镜拍照超时"
     }
 
     private fun storeFactsJson(result: MatchResult, vision: AiReply?): JSONObject {
@@ -937,22 +1379,47 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun runTool(name: String, args: JSONObject): String {
+        if (name == VisionSkill.CHECKOUT) {
+            return checkoutForAi(args)
+        }
+        val vision = VisionSkill.intentForTool(name)
+        if (vision != null) {
+            return processVision(
+                vision,
+                spatial = name == VisionSkill.READ_SIGN && isSpatial(_ui.value.question),
+            )
+        }
         return when (name) {
-            "look_store" -> lookStoreForAi()
-            "read_sign" -> readSignForAi()
-            "read_menu" -> readMenuForAi()
             "recommend" -> recommendForAi(args)
             "select_store" -> selectStoreForAi(args)
             "start_nav" -> startNavForAi(args)
             "stop_nav" -> stopNavForAi()
             "list_coupons" -> listCouponsForAi()
             "redeem_coupon" -> redeemCouponForAi(args)
-            "checkout" -> checkoutForAi(args)
             else -> JSONObject().put("ok", false).put("error", "未知工具 $name").toString()
         }
     }
 
     private fun recommendForAi(args: JSONObject): String {
+        if (session.catalog.isEmpty()) {
+            reloadCatalog()
+        }
+        val app = getApplication<Application>()
+        if (PhoneGps.hasPermission(app)) {
+            val origin = PhoneGps.last ?: PhoneGps.awaitFix(app, 4_000)
+            if (origin != null) {
+                val stores = StoreGeo.applyDistances(PhoneCatalog.load(app), origin.lat, origin.lng)
+                session.replaceCatalog(MemoryStoreCatalog(stores))
+                _ui.update { it.copy(storeCount = stores.size) }
+            }
+        }
+        if (session.catalog.isEmpty()) {
+            return JSONObject()
+                .put("ok", false)
+                .put("error", "empty_catalog")
+                .put("message", "还没有门店，请先用门店 App 在店门口录入")
+                .toString()
+        }
         if (session.activeSkill == ActiveSkill.NAV) {
             stopNavInternal(silent = true)
         }
@@ -960,7 +1427,13 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         val avoid = args.optBoolean("avoid_queue", false)
         val text = if (avoid) "$query 不要排队" else query
         val result = session.recommend(text)
+            ?: return JSONObject()
+                .put("ok", false)
+                .put("error", "empty_catalog")
+                .put("message", "还没有门店，请先用门店 App 在店门口录入")
+                .toString()
         recommendedThisTurn = true
+        rememberSpokenStore()
         val card = HudCard.fromRecommend(result)
         main.post {
             _ui.update {
@@ -999,14 +1472,16 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                     store.shortName.contains(name) || store.name.contains(name)
                 }
                 val matched = fromCand
-                    ?: StoreVision.matchStore(MockCatalog.sceneById(session.sceneId), name)
+                    ?: StoreVision.matchStore(session.catalog.stores(), name)
                     ?: return JSONObject().put("ok", false).put("error", "没找到$name").toString()
                 session.select(matched.id)
+                    ?: return JSONObject().put("ok", false).put("error", "没找到$name").toString()
             }
             else -> session.lastMatch
                 ?: return JSONObject().put("ok", false).put("error", "还没有候选店").toString()
-        }
+        } ?: return JSONObject().put("ok", false).put("error", "没找到这家店").toString()
         selectedThisTurn = true
+        rememberSpokenStore()
         val card = HudCard.fromStore(result.store)
         main.post {
             _ui.update {
@@ -1029,18 +1504,12 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     private fun bindStoreFromSpeech(spoken: String) {
         val q = spoken.trim()
         if (q.isBlank()) return
-        val scene = MockCatalog.sceneById(session.sceneId)
-        val hit = scene.stores.firstOrNull { store ->
+        val hit = session.catalog.stores().firstOrNull { store ->
             q.contains(store.shortName) || q.contains(store.name) ||
-                brandIn(q, store)
+                (store.shortName.isNotBlank() && q.contains(store.shortName.replace("店", "")))
         } ?: return
         if (hit.id == session.currentStore?.id) return
         selectStoreForAi(JSONObject().put("store_id", hit.id))
-    }
-
-    private fun brandIn(q: String, store: Store): Boolean {
-        val brands = listOf("海底捞", "喜茶", "巴奴", "西贝", "奈雪", "麦当劳", "春风十里", "屋头")
-        return brands.any { brand -> q.contains(brand) && (store.shortName.contains(brand) || store.name.contains(brand)) }
     }
 
     private fun startNavForAi(args: JSONObject): String {
@@ -1057,6 +1526,13 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }
         val store = session.currentStore
         if (store == null) {
+            if (session.catalog.isEmpty()) {
+                return JSONObject()
+                    .put("ok", false)
+                    .put("error", "empty_catalog")
+                    .put("message", "还没有门店，请先用门店 App 在店门口录入")
+                    .toString()
+            }
             return JSONObject()
                 .put("ok", false)
                 .put("error", "no_store")
@@ -1106,10 +1582,11 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             return "没配高德步行密钥，在 ai.env 写 AMAP_WEB_KEY"
         }
         val origin = PhoneGps.awaitFix(app, 8_000) ?: return "还没有 GPS，请到开阔处再试"
-        val store = StorePins.pin(store0, origin)
-        session.updateStore(store)
-        val dest = StorePins.destOf(store) ?: return "目的店没有坐标"
-        val route = AmapWalking.fetch(origin, dest, store.shortName, PhoneAi.amapKey)
+        if (!StoreGeo.hasCoords(store0)) {
+            return "这家店还没有坐标，请用门店 App 在店门口记录经纬度"
+        }
+        val dest = StorePins.destOf(store0) ?: return "目的店没有坐标"
+        val route = AmapWalking.fetch(origin, dest, store0.shortName, PhoneAi.amapKey)
             ?: return "步行路线失败，请检查高德密钥和网络"
         if (!session.startNav()) return "还没选定门店"
         announcedArrive = false
@@ -1125,7 +1602,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             return "定位服务启动失败"
         }
         val hint = WalkGuide.update(origin) ?: NavHint(
-            storeName = store.shortName,
+            storeName = store0.shortName,
             text = "开始走",
             remaining = route.distance,
         )
@@ -1137,12 +1614,13 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                     navHint = hint,
                     card = card,
                     match = session.lastMatch,
-                    status = "开始去${store.shortName}",
+                    status = "开始去${store0.shortName}",
                 )
             }
             CxrLinkHost.startNav(hint)
             CxrLinkHost.showCard(card)
         }
+        kickOpenVisionStream()
         return null
     }
 
@@ -1276,6 +1754,10 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                     AiReply("我看一下菜单。", "菜单", false)
                 }
             }
+            isScanCouponIntent(q) -> {
+                startCapture(VisionIntent.SCAN_COUPON)
+                AiReply("我看一下券码。", "扫券", false)
+            }
             isCouponIntent(q) -> {
                 val raw = if (isConfirmIntent(q) && session.pendingCoupon != null) {
                     redeemCouponForAi(JSONObject().put("confirm", true))
@@ -1366,6 +1848,10 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             return listOf("美团券", "用券", "核销", "验券").any { text.contains(it) }
         }
 
+        fun isScanCouponIntent(text: String): Boolean {
+            return listOf("扫券", "核销这张", "扫一下券", "券码", "团购码", "扫码核销").any { text.contains(it) }
+        }
+
         fun isConfirmIntent(text: String): Boolean {
             return listOf("确认", "确定", "好的付", "付钱吧", "核销吧").any { text.contains(it) }
         }
@@ -1399,12 +1885,6 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
         fun decodeJpeg(bytes: ByteArray): Bitmap? {
             return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        }
-
-        fun fingerprintOf(bytes: ByteArray): Long {
-            val crc = CRC32()
-            crc.update(bytes)
-            return crc.value
         }
     }
 }

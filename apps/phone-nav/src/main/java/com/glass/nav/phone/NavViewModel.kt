@@ -49,7 +49,7 @@ class NavViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun startIndoor() {
-        val first = NavProtocol.indoorScript.first()
+        val first = NavProtocol.scriptFor("目的店", 40).firstOrNull() ?: return
         _ui.update {
             it.copy(
                 navigating = true,
@@ -77,9 +77,12 @@ class NavViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun onFrame(jpeg: ByteArray) {
         val bitmap = decode(jpeg)
-        val nextIndex = (_ui.value.stepIndex + 1).coerceAtMost(NavProtocol.indoorScript.lastIndex)
-        val hint = if (_ui.value.navigating) {
-            NavProtocol.indoorScript[nextIndex]
+        val nextIndex = (_ui.value.stepIndex + 1).coerceAtMost(
+            NavProtocol.scriptFor("目的店", 40).lastIndex.coerceAtLeast(0),
+        )
+        val script = NavProtocol.scriptFor("目的店", 40)
+        val hint = if (_ui.value.navigating && script.isNotEmpty()) {
+            script[nextIndex]
         } else {
             _ui.value.hint
         }

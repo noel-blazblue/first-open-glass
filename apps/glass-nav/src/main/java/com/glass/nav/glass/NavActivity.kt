@@ -154,6 +154,7 @@ class NavActivity : android.app.Activity() {
         wantMic = false
         rtcActive = false
         GlassRtc.stop()
+        GlassP2p.stop()
         stopCamera()
         stopMic()
         imu.stop()
@@ -200,11 +201,26 @@ class NavActivity : android.app.Activity() {
 
     private fun handleRtc(cmd: String, json: String?) {
         when (cmd) {
+            NavProtocol.CMD_P2P_OFFER -> joinP2p(json)
+            NavProtocol.CMD_P2P_STOP -> GlassP2p.stop()
             NavProtocol.CMD_RTC_START -> startRtc()
             NavProtocol.CMD_RTC_STOP -> stopRtc()
             NavProtocol.CMD_RTC_SDP -> GlassRtc.onRemoteSdp(json)
             NavProtocol.CMD_RTC_ICE -> GlassRtc.onRemoteIce(json)
         }
+    }
+
+    private fun joinP2p(json: String?) {
+        val offer = NavProtocol.parseP2pOffer(json)
+        if (offer == null) {
+            bridge.sendRtc(NavProtocol.CMD_P2P_FAIL, "p2p.offer 无效")
+            return
+        }
+        hud.status = "正在连 Direct"
+        GlassP2p.join(this, offer) { cmd, payload ->
+            main.post { bridge.sendRtc(cmd, payload) }
+        }
+        Log.i(TAG, "p2p join ssid=${offer.ssid}")
     }
 
     private fun startRtc() {
@@ -283,6 +299,9 @@ class NavActivity : android.app.Activity() {
             }
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 add(Manifest.permission.RECORD_AUDIO)
+            }
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
             }
         }
         if (needed.isNotEmpty()) {

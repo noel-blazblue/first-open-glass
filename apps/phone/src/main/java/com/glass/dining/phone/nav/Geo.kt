@@ -52,16 +52,8 @@ object Geo {
 }
 
 object StorePins {
-    fun pin(store: Store, origin: GeoPoint): Store {
-        if (store.lat != 0.0 || store.lng != 0.0) return store
-        val bearing = (store.id.hashCode().toLong() and 0x7fffffffL).toDouble() % 360.0
-        val meters = store.distanceMeters.coerceAtLeast(25).toDouble()
-        val dest = Geo.offset(origin, meters, bearing)
-        return store.copy(lat = dest.lat, lng = dest.lng)
-    }
-
     fun destOf(store: Store): GeoPoint? {
-        if (store.lat == 0.0 && store.lng == 0.0) return null
+        if (!com.glass.dining.shared.catalog.StoreGeo.hasCoords(store)) return null
         return GeoPoint(store.lat, store.lng)
     }
 }

@@ -1,3 +1,59 @@
+## 2026-08-27 — 屏幕里的店招被 probe 判成不是店
+
+- 场景：对着电脑上的巴奴店招图，抽帧和打分都过了，镜片仍无反应。
+- 误判：模型看不见店招；或没打到 Vision。
+- 根因：真机 `auto probe isStore=false`。OCR 全是 `logitech`。键盘大字块走了「有大字」公式，han=0 把分压到阈值附近反复掉线。PROBE 规则把「网页/IDE/不确定」写成 false，屏幕里的店招被一票否决。
+- 以后先做：无汉字的大字块当噪点，改走亮带公式。probe 规则改成「看得见店招就 true，旁边有键盘不要否决」。本地先拿店招原图 + 屏幕合成图打 Vision，再看真机 `auto probe`。
+- 不要做：用 OCR 原文当店名；把 IDE/网页写成绝对 false。
+
+## 2026-08-27 — 自动认店不能拿 OCR 当「是不是店」的开关
+
+- 场景：对着电脑屏幕上的巴奴店招看很久，眼镜无反应。
+- 误判：画质或抽帧坏了；或目录没有「巴奴」所以匹配不上。
+- 根因：艺术字+屏幕摩尔纹时店招抄不出。OCR 只抄到 `logitech` / IDE 噪点。旧逻辑要求 OCR 连续两帧唯一命中目录才出卡，`decision=UPLOAD_FULL` 时从未打视觉模型。
+- 以后先做：端侧只打「像不像店」（大字块/汉字/门头亮带），过线后裁主体图问 Vision `is_store`。不是店则 TTS/HUD 都不动。用户说「识别门店」仍走 `look_store`。
+- 不要做：用 OCR 字符串是否命中目录决定要不要问模型；把键盘碎字当成店名。
+
+## 2026-08-26 — 点「开眼镜画面」只看到「视频流已关」
+
+- 场景：USB 还插在眼镜上，手机点开画面，立刻提示「视频流已关」。
+- 误判：WebRTC / 720p 采集把流拉挂了。
+- 根因：手机 Direct 组已经建好。眼镜 `wifi_on=0`（USB 调试会关 Wi-Fi），`setWifiEnabled` 失败后立刻 `P2P_FAIL`。随后 `PhoneRtc.stop()` / `PhoneP2p.stop()` 把失败文案盖成「视频流已关」。
+- 以后先做：关流不要覆盖 abort 原因。眼镜 Wi-Fi 关着时重试到超时，把「请拔 USB / 开 Wi-Fi」显示在手机上。开画面前看 `wifi_on` 和 `GlassP2p wifi was off`。
+- 不要做：把「视频流已关」当采集失败；USB 插着时假定眼镜 Wi-Fi 是开的。
+
+## 2026-08-26 — 到餐显示 0 家门店，Download 里其实有 glass-stores.json
+
+- 场景：门店 App 录过望京真店，`Download/glass-stores.json` 约 7KB，到餐界面却是「已加载 0 家」。
+- 误判：文件没写上；或 ContentProvider 一 query 到空列表就当没有店。
+- 根因：小米上公开 Download 属主是门店 App（`660`），到餐 `File` 读不到。Provider 若返回空/失败，旧代码 `?.let` 把空列表当真结果，不再读文件。应用私有目录里也没有副本。
+- 以后先做：目录顺序 Provider → MediaStore Downloads → `filesDir` / `Android/data/.../files` → 公开 Download。空 Provider 要继续往下找。真机看 `catalog provider/mediastore/file n=`。
+- 不要做：为了有店再写回 MockCatalog；看到 0 家就当没录入。
+
+## 2026-08-26 — Wi-Fi Direct 探针：手机 createGroup，眼镜 STA 加入
+
+- 场景：户外没路由器也要视频。眼镜已改 USB 调试，允许把原来的 STA Wi-Fi 踢掉。
+- 误判：必须企业 P2P SDK；或两边 `discoverPeers` 才能组网。
+- 根因：消费固件有 `p2p0`。手机 `WifiP2pManager.createGroup` 当 GO，CXR 把 `DIRECT-` SSID/口令送给眼镜，眼镜 `WifiNetworkSpecifier` 当普通热点客户端，再复用 WebRTC。
+- 以后先做：开视频流先看 `PhoneP2p group ready` 和 `GlassP2p joined`。15s 没加入要暴露失败，不要回退现有 Wi-Fi。眼镜定位权限用 `adb pm grant`。
+- 不要做：眼镜上走 `connect()` 等系统确认框；把 Direct 口令打进聊天。
+
+## 2026-08-26 — 消费固件有 Wi-Fi Direct 硬件，系统 P2P 默认关着
+
+- 场景：户外没路由器，想绕开「必须同一局域网」做视频。不走企业 `PSecuritySDK`，问 CustomApp 能不能用 Android 原生 P2P。
+- 误判：消费固件没有 P2P；或 CXR 没有接口就等于眼镜 Wi-Fi Direct 不存在。
+- 根因：固件 `1.24.011`（Android 12）声明了 `android.hardware.wifi.direct`，网卡有 `p2p0`（当前 DOWN）。`dumpsys wifip2p` 是 `P2pDisabledState`，要等 App 调 `WifiP2pManager.initialize()` 才会 ENABLE。属性里有 `persist.p2p.Go.channel=5745`。到餐眼镜 App 还没要 P2P 权限。
+- 以后先做：用原生 `createGroup`（手机当 GO）+ CXR 把 SSID/口令送给眼镜，眼镜当普通 STA 加入 `DIRECT-` 热点，避免 `connect()` 弹窗。出网段后再复用现有 WebRTC。真机先验证会不会把当前 STA/无线 ADB 踢掉。
+- 不要做：在消费版接企业 `PSecuritySDK`；用 `discoverPeers` 当主路径（镜片没法点系统确认框）。
+
+## 2026-08-26 — 眼镜 WebRTC 探针：信令走 CXR，画面走同 Wi-Fi RTP
+
+- 场景：手机点「开视频流（探针）」，要确认消费固件相机和手机 App 能不能拉到实时画面。
+- 误判：CXR CustomCmd 能传视频；或消费固件没有公开视频流 API 就等于相机拉不起来。
+- 根因：CXR Caps 只适合 SDP/ICE 信令。RTP 是眼镜↔手机局域网 WebRTC。真机同一 5GHz Wi-Fi 时 ICE 约 250ms 进 CONNECTED。眼镜 Camera2 `camera 0` 能开，无 AF，最低稳定档 15fps；请求 8fps 时采集仍是 15，手机收到约 8fps。编码后第一帧约 320x240，不是采集的 640x480。
+- 以后先做：先确认 Direct 组网成功再开流。log 看 `PhoneP2p group ready`、`GlassP2p joined`、`PhoneRtc ice CONNECTED` 和 `frame n=1`。关流后 EglRenderer 仍可能报 0 帧，那是预览还在、PeerConnection 已关。认店/路牌/菜单/券/支付从视频流抽帧，**不要**为拍照停 RTC。
+- 不要做：把 CXR/蓝牙当视频通道；用截图判断镜片；以为 8fps 采集参数眼镜真的会出 8fps；看店时 `stopRtc` 再 `camera.snap`。
+
 ## 2026-08-26 — 用户话没说完就被收句
 
 - 场景：对着眼镜说话，中间停顿一下，后半句还没出口系统已经开始处理。

@@ -3,7 +3,7 @@ package com.glass.dining.phone.vision
 import android.graphics.Bitmap
 import android.util.Log
 import com.glass.dining.shared.engine.StoreVision
-import com.glass.dining.shared.model.Scene
+import com.glass.dining.shared.model.Store
 import com.glass.dining.shared.vision.LocalExtract
 import com.glass.dining.shared.vision.VisionDecision
 import com.glass.dining.shared.vision.VisionIntent
@@ -16,38 +16,41 @@ object VisionRouter {
     fun analyze(
         jpeg: ByteArray,
         intent: VisionIntent,
-        scene: Scene,
+        stores: List<Store>,
         spatial: Boolean = false,
+        skipDuplicate: Boolean = false,
     ): Pair<Bitmap?, VisionOutcome> {
         val start = System.currentTimeMillis()
-        val (bitmap, quality) = QualityGate.inspect(jpeg)
+        val (bitmap, extract) = extract(jpeg, skipDuplicate)
+        val outcome = decide(intent, extract, stores, spatial)
+        log(outcome, start)
+        return bitmap to outcome
+    }
+
+    fun extract(jpeg: ByteArray, skipDuplicate: Boolean = false): Pair<Bitmap?, LocalExtract> {
+        val (bitmap, quality) = QualityGate.inspect(jpeg, skipDuplicate = skipDuplicate)
         if (bitmap == null || !quality.ok) {
-            val outcome = VisionPolicy.decide(
-                intent,
-                LocalExtract(quality = quality),
-                emptyList(),
-                spatial,
-            )
-            log(outcome, start)
-            return bitmap to outcome
+            return bitmap to LocalExtract(quality = quality)
         }
-        val barcodes = if (intent == VisionIntent.CHECKOUT || intent == VisionIntent.LOOK_STORE) {
-            LocalVision.barcodes(bitmap)
-        } else {
-            emptyList()
-        }
+        val barcodes = LocalVision.barcodes(bitmap)
         val ocr = if (barcodes.isEmpty()) LocalVision.ocr(bitmap) else emptyList()
-        val extract = LocalExtract(
+        return bitmap to LocalExtract(
             quality = quality,
             ocr = ocr,
             barcodes = barcodes,
             width = bitmap.width,
             height = bitmap.height,
         )
-        val ranked = StoreVision.rankStores(scene, extract.ocrText)
-        val outcome = VisionPolicy.decide(intent, extract, ranked, spatial)
-        log(outcome, start)
-        return bitmap to outcome
+    }
+
+    fun decide(
+        intent: VisionIntent,
+        extract: LocalExtract,
+        stores: List<Store>,
+        spatial: Boolean = false,
+    ): VisionOutcome {
+        val ranked = StoreVision.rankStores(stores, extract.ocrText)
+        return VisionPolicy.decide(intent, extract, ranked, spatial)
     }
 
     fun bytesForLlm(jpeg: ByteArray, outcome: VisionOutcome): ByteArray {
