@@ -705,7 +705,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 CxrLinkHost.showCard(card)
             }
         }
-        main.post { PhoneTts.speak(reason.take(24)) }
+        main.post { PhoneTts.speak("看画面失败") }
         return JSONObject().put("ok", false).put("error", reason).toString()
     }
 
@@ -773,12 +773,13 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             val snap = link.snapshot
             if (snap.lastError.isNotBlank() && !snap.open && snap.startedAtMs >= t0) {
                 visionWait.set(null)
-                return snap.lastError
+                Log.w(TAG, "vision link ${snap.lastError}")
+                return "画面还没准备好，请再看一下"
             }
             latch.await(200, TimeUnit.MILLISECONDS)
         }
         visionWait.set(null)
-        return link.lastError.ifBlank { "Direct 没出画，没法抽帧" }
+        return "画面还没准备好，请再看一下"
     }
 
     private fun grabVisionJpeg(): Pair<ByteArray?, String?> {
@@ -793,7 +794,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             return cached to null
         }
         Log.i(TAG, "vision grab live bytes=0")
-        return null to "视频流还没出画，请对准再试"
+        return null to "画面还没准备好，请再看一下"
     }
 
     private fun finishLookStore(jpeg: ByteArray, outcome: VisionOutcome, source: String): String {

@@ -89,10 +89,7 @@ class GlassActivity : android.app.Activity() {
         hud = GlassHudView(this)
         hud.card = HudLines.idle()
         setContentView(hud)
-        GlassWifi.hold(this) { line ->
-            hud.status = line
-            hud.invalidate()
-        }
+        GlassWifi.hold(this)
         imu = ImuTracker(this)
         spatial = SpatialHost(this)
         hud.occupancy = spatial.occupancy
@@ -130,7 +127,7 @@ class GlassActivity : android.app.Activity() {
             },
             onCamera = { on ->
                 if (on && rtcActive) {
-                    hud.status = "视频流占用相机"
+                    Log.i(TAG, "camera skipped, rtc active")
                 } else if (on) {
                     navActive = true
                     spatial.start()
@@ -159,7 +156,10 @@ class GlassActivity : android.app.Activity() {
             onCalibrate = {
                 imu.calibrate()
             },
-            onStatus = { hud.status = it },
+            onStatus = { line ->
+                Log.i(TAG, "cxr status $line")
+                showUserStatus(line)
+            },
             onFrameAck = {
                 main.removeCallbacks(frameTimeout)
                 camera.markIdle()
@@ -261,11 +261,10 @@ class GlassActivity : android.app.Activity() {
             bridge.sendRtc(NavProtocol.CMD_P2P_FAIL, "p2p.offer 无效")
             return
         }
-        hud.status = "正在连 Direct"
+        Log.i(TAG, "p2p join ssid=${offer.ssid}")
         GlassP2p.join(this, offer) { cmd, payload ->
             main.post { bridge.sendRtc(cmd, payload) }
         }
-        Log.i(TAG, "p2p join ssid=${offer.ssid}")
     }
 
     private fun startRtc() {
@@ -273,11 +272,10 @@ class GlassActivity : android.app.Activity() {
         snapOnce = false
         stopCamera()
         spatial.ensureCamera()
-        hud.status = "视频流"
+        Log.i(TAG, "rtc start requested")
         GlassRtc.start(this, spatial.hub) { cmd, payload ->
             main.post { bridge.sendRtc(cmd, payload) }
         }
-        Log.i(TAG, "rtc start requested")
     }
 
     private fun stopRtc() {
@@ -292,17 +290,17 @@ class GlassActivity : android.app.Activity() {
         if (checkSelfPermission(Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            hud.status = "没有相机权限"
+            showUserStatus("没有相机权限")
             bridge.sendError("没有相机权限")
             return
         }
         if (rtcActive || spatial.hub.opened || navActive) {
             spatial.ensureCamera()
-            hud.status = if (navActive || rtcActive) "" else "正在打开相机"
             return
         }
         val status = camera.start()
-        hud.status = if (navActive) "" else status
+        Log.i(TAG, "camera start $status")
+        showUserStatus(status)
         main.removeCallbacks(captureTick)
         if (navActive) {
             main.postDelayed(captureTick, 800)
@@ -322,14 +320,14 @@ class GlassActivity : android.app.Activity() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            hud.status = "没有麦克风权限"
+            showUserStatus("没有麦克风权限")
             bridge.sendError("没有麦克风权限")
             requestDevicePermissions()
             return
         }
         val status = mic.start()
         if (mic.lastError != null) {
-            hud.status = status
+            showUserStatus(status)
             bridge.sendError(status)
         }
         Log.i(TAG, "mic $status")
@@ -337,6 +335,11 @@ class GlassActivity : android.app.Activity() {
 
     private fun stopMic() {
         mic.stop()
+    }
+
+    private fun showUserStatus(line: String) {
+        hud.status = if (line.contains("权限")) line else ""
+        hud.invalidate()
     }
 
     private fun requestDevicePermissions() {

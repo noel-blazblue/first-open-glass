@@ -86,12 +86,16 @@ class GlassHudView @JvmOverloads constructor(
         green.textAlign = Paint.Align.LEFT
         green.textSize = 14f
         canvas.drawText(clockFmt.format(Date()), 16f, h - 16f, green)
-        if (status.isNotBlank()) {
+        if (isProductStatus(status)) {
             green.textAlign = Paint.Align.CENTER
             green.textSize = 13f
             canvas.drawText(status.take(16), cx, h - 36f, green)
         }
         green.textAlign = Paint.Align.CENTER
+    }
+
+    private fun isProductStatus(line: String): Boolean {
+        return line.contains("权限")
     }
 
     private fun drawTalk(canvas: Canvas, cx: Float, w: Float, h: Float) {
