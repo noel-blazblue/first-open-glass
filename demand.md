@@ -6,7 +6,7 @@
 
 店来自 **门店录入 App**（店门口记录真实经纬度）以及 **高德公开地点**。本地目录才有排队、招牌、演示券；公开地点的评分/人均/营业时间/电话来自高德 `PlaceProfile`，没有的字段不编。定位、步行路线、剩余距离用真 GPS + 高德。支付和核券本轮仍未接真接口。
 
-眼镜主应用是 **CustomApp 原生 Android**（`apps/glass-nav`）。消费版 CustomView 的「四行绿字、单绿光波导」不是能力上限。
+眼镜主应用是 **CustomApp 原生 Android**（`apps/glass`）。消费版 CustomView 的「四行绿字、单绿光波导」不是能力上限。
 
 ---
 
@@ -161,7 +161,6 @@ Agent 每一轮模型调用都走可取消 SSE（含 `tool_calls`）。镜片时
 - 无导视时编造完整室内路线，或只凭相同 VLM 文案合并拓扑节点
 - 真美团 / 自研室外路网 / 高德导航 SDK 自带地图 UI
 - 企业版 `glass3.open.sdk` / `phone.sdk`、P2P JSON、`clientId=GlassDining`
-- 把 `apps/glass` 当主应用；把 `apps/phone-nav` 当产品入口
 - 用 AIUI Studio / 灵珠网页当本期主工程
 - 把消费版 CustomView 四行绿字当成 CustomApp 的 UI 上限
 - 克隆乐奇桌面三个 tab、假天气、时速 + 小地图
@@ -177,9 +176,7 @@ Agent 每一轮模型调用都走可取消 SSE（含 `tool_calls`）。镜片时
 | 手机 `apps/phone` | **主应用 / 产品入口**。乐奇授权拿 CXR token；`CXRLink` + `CUSTOMAPP`；Agent 工具；TTS；GPS + 高德步行；读门店目录 |
 | 门店 `apps/store` | 线下录入店名和当前经纬度，写入 `Download/glass-stores.json`；改完不用重装到餐 |
 | 乐奇 AI App | 连眼镜、桥接 IO。本 App 不自己扫 Glass3 蓝牙 |
-| 眼镜 CustomApp | 一块 Activity：对话 talk / 门店详情 / 导航条；默认对话面；仅 `look_store` 单次快门 |
-| `apps/phone-nav` | 实验室旁路，**不是**产品入口 |
-| `apps/glass` | **归档**，仅作历史裸机实验，不参与本期验收 |
+| 眼镜 CustomApp `apps/glass` | 一块 Activity：对话 talk / 门店详情 / 导航条；默认对话面；仅认店时单次快门 |
 
 数据路径：`眼镜 ⇄ 乐奇 AI App ⇄ 本机 CXR-L ⇄ 手机 GPS / 高德步行 / 门店 App 录入的真实坐标`。
 
@@ -189,16 +186,14 @@ Agent 每一轮模型调用都走可取消 SSE（含 `tool_calls`）。镜片时
 
 ```text
 apps/phone     主应用：到餐 Agent + CXR-L + 乐奇 + GPS 步行
+apps/glass     眼镜 CustomApp（对话面 / 门店详情 / 导航条）
 apps/store     门店录入：店名 + 当前经纬度，随时改 JSON
 shared         Agent 协议 / place 地点模型 / 目录 JSON / 匹配 / 问答
 nav-api        CustomApp 通道
-apps/glass-nav 眼镜 CustomApp（对话面 / 门店详情 / 导航条）
-apps/phone-nav 实验室，不当入口
-apps/glass     归档（企业/裸机）
 ```
 
 - Maven：`https://maven.rokid.com/repository/maven-public/`
-- 手机：`com.rokid.cxr:client-l:1.0.3`，会话类型 `CUSTOMAPP`，眼镜包名 `com.glass.nav.glass`
+- 手机：`com.rokid.cxr:client-l:1.0.3`，会话类型 `CUSTOMAPP`，眼镜包名 `com.glass.dining.glass`
 - 乐奇包名：`com.rokid.sprite.aiapp`（需 ≥ 1.7.14）
 - 消费版 SDK 文档：[open.rokid.com/sdk](https://open.rokid.com/sdk)
 - 步行路线：高德 Web 服务 `v3/direction/walking`，密钥 `AMAP_WEB_KEY`（与 DeepSeek 一起放 `ai.env`）

@@ -77,7 +77,7 @@ class PlaceWireTest {
         assertTrue(texts.contains(StorePanel.DEFAULT_HINT))
         assertFalse(texts.any { it.contains("排队") })
         assertFalse(texts.any { it.contains("券") })
-        assertEquals(StorePanelLine.Kind.SOURCE, lines.first().kind)
+        assertTrue(texts.contains("附近门店"))
     }
 
     @Test

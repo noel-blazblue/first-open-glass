@@ -15,13 +15,10 @@
 | 手机 `apps/phone` | 主应用。乐奇授权、`CXRLink`、到餐 Agent、TTS、真 GPS 导航 |
 | 门店 `apps/store` | 线下录入店名和经纬度，随时改 JSON |
 | 共享 `shared` | Agent 协议、`place/` 地点句柄与资料、目录 JSON、匹配 |
-| 眼镜 `apps/glass-nav` | CustomApp HUD |
-| `apps/glass` | 归档的企业/裸机实验 |
+| 眼镜 `apps/glass` | CustomApp HUD。包名 `com.glass.dining.glass` |
 
 CXR 依赖：`com.rokid.cxr:client-l:1.0.3`。真机请先用乐奇连上这副眼镜，再打开本 App。
 
 ```bash
-./gradlew :apps:phone:assembleDebug :apps:store:assembleDebug :apps:glass-nav:assembleDebug
+./gradlew :apps:phone:assembleDebug :apps:store:assembleDebug :apps:glass:assembleDebug
 ```
-
-功能键单击识别、双击下一家是企业/裸机路径，本期不验收。

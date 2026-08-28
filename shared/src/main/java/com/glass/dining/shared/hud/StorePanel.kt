@@ -37,7 +37,7 @@ object StorePanel {
     }
 
     private fun sourceLabel(place: PlaceProfile): String {
-        return if (place.source == PlaceRef.SOURCE_CATALOG) "已录入" else "高德"
+        return if (place.source == PlaceRef.SOURCE_CATALOG) "已录入" else "附近门店"
     }
 
     private fun categoryOf(place: PlaceProfile): String? {

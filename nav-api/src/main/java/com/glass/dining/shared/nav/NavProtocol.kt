@@ -4,8 +4,8 @@ import org.json.JSONObject
 import kotlin.math.max
 
 object NavProtocol {
-    const val GLASS_PACKAGE = "com.glass.nav.glass"
-    const val GLASS_ACTIVITY = ".NavActivity"
+    const val GLASS_PACKAGE = "com.glass.dining.glass"
+    const val GLASS_ACTIVITY = ".GlassActivity"
     const val GLASS_ENTRY = "$GLASS_PACKAGE$GLASS_ACTIVITY"
 
     const val CHANNEL_DOWN = "rk_nav"

@@ -29,8 +29,7 @@ object AgentContextAssembler {
         val place = world.boundPlace
         val obs = world.observation
         return buildString {
-            append("skill=").append(world.skill)
-            append(" nav=").append(world.navActive)
+            append("nav=").append(world.navActive)
             append(" role=").append(world.businessRole)
             append(" bound=").append(place?.name ?: "无")
             if (place != null) append("(").append(place.source).append(")")
@@ -51,10 +50,8 @@ object AgentContextAssembler {
         return when {
             world.navActive && dest != null -> "【当前任务】正在步行导航；目的地=$dest"
             world.navActive -> "【当前任务】正在步行导航；目的地未确定"
-            world.skill == "menu" -> "【当前任务】查看菜单"
-            world.skill == "coupon" -> "【当前任务】查看优惠"
-            world.skill == "pay" -> "【当前任务】演示支付"
-            world.skill == "browse" && dest != null -> "【当前任务】查看门店信息"
+            world.pendingPay.isNotBlank() -> "【待处理】${world.pendingPay}"
+            world.pendingCoupon.isNotBlank() -> "【待处理】核销=${world.pendingCoupon}"
             else -> "【当前任务】响应用户当前请求"
         }
     }

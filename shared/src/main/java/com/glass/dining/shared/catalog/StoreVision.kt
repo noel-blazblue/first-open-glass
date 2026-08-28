@@ -1,4 +1,4 @@
-package com.glass.dining.shared.engine
+package com.glass.dining.shared.catalog
 
 import com.glass.dining.shared.model.ScoredStore
 import com.glass.dining.shared.model.Store

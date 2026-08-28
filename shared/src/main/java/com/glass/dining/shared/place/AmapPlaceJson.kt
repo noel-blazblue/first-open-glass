@@ -5,7 +5,7 @@ object AmapPlaceJson {
         val status = field(raw, "status")
         if (status != "1") {
             val info = field(raw, "info").ifBlank { field(raw, "infocode") }
-            return AroundResult(ok = false, error = "amap_error", message = "高德搜索失败：$info")
+            return AroundResult(ok = false, error = "amap_error", message = "公开地点搜索失败：$info")
         }
         val block = arrayBody(raw, "pois")
         val places = splitObjects(block).mapNotNull { item ->

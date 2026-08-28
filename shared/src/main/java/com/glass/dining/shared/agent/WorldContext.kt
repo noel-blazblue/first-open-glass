@@ -41,7 +41,6 @@ data class SceneObservation(
 }
 
 data class WorldContext(
-    val skill: String = "none",
     val boundPlace: PlaceRef? = null,
     val boundProfile: PlaceProfile? = null,
     val disambiguation: List<PlaceRef> = emptyList(),
@@ -74,7 +73,7 @@ data class WorldContext(
             boundPlace == null -> ROLE_NONE
             navActive && navArrived -> ROLE_APPROACHING
             navActive -> ROLE_DESTINATION
-            skill == "menu" || skill == "coupon" || skill == "pay" -> ROLE_SERVING
+            pendingPay.isNotBlank() || pendingCoupon.isNotBlank() -> ROLE_SERVING
             else -> ROLE_VIEWING
         }
 

@@ -8,9 +8,11 @@ import org.junit.Test
 class StoreHudPolicyTest {
     @Test
     fun askStoreKeepsPanel() {
-        assertTrue(StoreHudPolicy.keepsStorePanel(AgentToolCatalog.ASK_STORE.name))
+        assertTrue(StoreHudPolicy.keepsStorePanel(AgentToolCatalog.GET_PLACE_DETAILS.name))
+        assertTrue(StoreHudPolicy.keepsStorePanel("ask_store"))
         assertTrue(StoreHudPolicy.keepsStorePanel(AgentToolCatalog.SELECT_STORE.name))
-        assertTrue(StoreHudPolicy.keepsStorePanel(AgentToolCatalog.LOOK_STORE.name))
+        assertTrue(StoreHudPolicy.keepsStorePanel(AgentToolCatalog.LOOK_AT_SCENE.name))
+        assertTrue(StoreHudPolicy.keepsStorePanel("look_store"))
         assertTrue(StoreHudPolicy.keepsStorePanel(AgentToolCatalog.RECOMMEND.name))
         assertTrue(StoreHudPolicy.keepsStorePanel("start_nav"))
         assertFalse(StoreHudPolicy.shouldDismissOffTopic(true, false, true))
@@ -18,7 +20,6 @@ class StoreHudPolicyTest {
 
     @Test
     fun chatAndUnrelatedToolsDismiss() {
-        assertFalse(StoreHudPolicy.keepsStorePanel(AgentToolCatalog.LOOK_AT_SCENE.name))
         assertFalse(StoreHudPolicy.keepsStorePanel(AgentToolCatalog.SEARCH_NEARBY.name))
         assertFalse(StoreHudPolicy.keepsStorePanel(AgentToolCatalog.RESOLVE_DEST.name))
         assertTrue(StoreHudPolicy.shouldDismissOffTopic(true, false, false))

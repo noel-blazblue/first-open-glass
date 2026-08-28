@@ -16,7 +16,6 @@ class AgentContextAssemblerTest {
         )
         val text = AgentContextAssembler.format(
             WorldContext(
-                skill = "nav",
                 boundPlace = place("海底捞火锅"),
                 environment = env,
                 navActive = true,
@@ -36,7 +35,7 @@ class AgentContextAssemblerTest {
     @Test
     fun browsingStoreIsViewingNotLocation() {
         val text = AgentContextAssembler.format(
-            WorldContext(skill = "browse", boundPlace = place("海底捞火锅")),
+            WorldContext(boundPlace = place("海底捞火锅")),
         )
         assertTrue(text.contains("当前查看门店"))
         assertTrue(text.contains("不是用户当前位置"))
@@ -48,7 +47,6 @@ class AgentContextAssemblerTest {
     fun boundAmapPlaceExposesAnswerableFacts() {
         val text = AgentContextAssembler.format(
             WorldContext(
-                skill = "browse",
                 boundPlace = PlaceRef(
                     id = "B0HGUAEBKL",
                     name = "潮黄记·潮汕鲜牛肉火锅(望京店)",
@@ -80,12 +78,12 @@ class AgentContextAssemblerTest {
     @Test
     fun menuAndPayUseServingRole() {
         val menu = AgentContextAssembler.format(
-            WorldContext(skill = "menu", boundPlace = place("巴奴")),
+            WorldContext(boundPlace = place("巴奴")),
         )
         val pay = AgentContextAssembler.format(
-            WorldContext(skill = "pay", boundPlace = place("巴奴"), pendingPay = "待付88元给巴奴"),
+            WorldContext(boundPlace = place("巴奴"), pendingPay = "待付88元给巴奴"),
         )
-        assertTrue(menu.contains("当前服务门店"))
+        assertTrue(menu.contains("当前查看门店"))
         assertTrue(pay.contains("当前服务门店"))
         assertTrue(pay.contains("待付88元给巴奴"))
         assertFalse(menu.contains("导航目的地"))
@@ -94,9 +92,9 @@ class AgentContextAssemblerTest {
     @Test
     fun stoppingNavKeepsBoundPlaceAsViewing() {
         val text = AgentContextAssembler.format(
-            WorldContext(skill = "browse", boundPlace = place("海底捞火锅"), navActive = false),
+            WorldContext(boundPlace = place("海底捞火锅"), navActive = false),
         )
-        assertTrue(text.contains("查看门店信息"))
+        assertTrue(text.contains("当前查看门店"))
         assertFalse(text.contains("正在步行导航"))
         assertTrue(text.contains("当前查看门店"))
     }
@@ -180,7 +178,6 @@ class AgentContextAssemblerTest {
         )
         val text = AgentContextAssembler.format(
             WorldContext(
-                skill = "nav",
                 boundPlace = place("海底捞火锅"),
                 environment = corridor,
                 navActive = true,
@@ -196,7 +193,6 @@ class AgentContextAssemblerTest {
         val env = EnvironmentMerge.fromSpeech("我在7楼", EnvironmentState(), 1)
         val text = AgentContextAssembler.format(
             WorldContext(
-                skill = "nav",
                 boundPlace = place("海底捞火锅"),
                 environment = env,
                 navActive = true,
@@ -211,7 +207,6 @@ class AgentContextAssemblerTest {
     @Test
     fun debugKeepsInternalFieldsOutOfModelContext() {
         val world = WorldContext(
-            skill = "nav",
             boundPlace = place("海底捞火锅").copy(source = PlaceRef.SOURCE_CATALOG),
             navActive = true,
             catalogCount = 12,
@@ -226,7 +221,7 @@ class AgentContextAssemblerTest {
         val debug = AgentContextAssembler.debug(world)
         assertFalse(model.contains("catalog=12"))
         assertFalse(model.contains("skill=nav"))
-        assertTrue(debug.contains("skill=nav"))
+        assertTrue(debug.contains("nav=true"))
         assertTrue(debug.contains("catalog=12"))
         assertTrue(debug.contains("catalog"))
         assertTrue(model.contains("【本地目录】餐饮增强数据 12 家，可 recommend"))
@@ -236,7 +231,6 @@ class AgentContextAssemblerTest {
     fun approachingRoleWhenNavArrived() {
         val text = AgentContextAssembler.format(
             WorldContext(
-                skill = "nav",
                 boundPlace = place("海底捞火锅"),
                 navActive = true,
                 navArrived = true,

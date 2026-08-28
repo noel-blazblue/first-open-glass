@@ -98,8 +98,8 @@
 
 - 场景：点对话后再开视频，NLS 把短句听成别的词；log 里 `mic started` 出现两次，PCM 大约 2 倍实时。
 - 误判：ASR 模型差、某个店名要写死纠错。
-- 根因：`joinP2p` 换网会让 `NavActivity` pause/resume。旧逻辑 `onPause` 无条件 `stopMic`，`onResume` 见 `wantMic` 再开。旧 `AudioRecord.read` 还没退出，新的已经在采，两路 PCM 叠进 ASR。
-- 以后先做：麦跟 `mic.on`/`mic.off`（`wantMic`），不要跟页面可见性。还在听时 `onPause` 不停麦；`GlassMic` 用 generation，stop 后旧线程不能被新的 `running=true` 救活。装包看 `mic started` 全程只有一次，resume 应是 `mic 眼镜麦已开`。签名不一致时先 `adb uninstall com.glass.nav.glass` 再 `installGlassAdb`。
+- 根因：`joinP2p` 换网会让 `GlassActivity` pause/resume。旧逻辑 `onPause` 无条件 `stopMic`，`onResume` 见 `wantMic` 再开。旧 `AudioRecord.read` 还没退出，新的已经在采，两路 PCM 叠进 ASR。
+- 以后先做：麦跟 `mic.on`/`mic.off`（`wantMic`），不要跟页面可见性。还在听时 `onPause` 不停麦；`GlassMic` 用 generation，stop 后旧线程不能被新的 `running=true` 救活。装包看 `mic started` 全程只有一次，resume 应是 `mic 眼镜麦已开`。签名不一致时先 `adb uninstall com.glass.dining.glass` 再 `installGlassAdb`。
 - 不要做：为听错的店名写谐音表；用 `install -r` 硬覆盖不同签名的旧包。
 
 ## 2026-08-27 — 说话时姿态改走 WebRTC DataChannel，CXR 只保 PCM
@@ -130,7 +130,7 @@
 
 - 场景：转头、低头、走 10m 后贴地箭头应停在原地；跟踪丢了还画假箭头会指向墙或人。
 - 误判：用固定眼高 + pitch 把 2.2/3.6/5.2m 投到屏幕就算 AR；手机 heading 够用。
-- 根因：旧 `NavHudView.projectGround` 没有世界锚点。Camera2 和原始 gyro/accel 的 `event.timestamp` 必须能对上，`TimeSync.usable` 要求 ≥8 样本、|offset|<20ms、相机间隔 20–120ms。不满足时不能用 pitch 投影冒充。
+- 根因：旧 `GlassHudView.projectGround` 没有世界锚点。Camera2 和原始 gyro/accel 的 `event.timestamp` 必须能对上，`TimeSync.usable` 要求 ≥8 样本、|offset|<20ms、相机间隔 20–120ms。不满足时不能用 pitch 投影冒充。
 - 以后先做：`SensorProbe` 读 Camera2 内参和 `SENSOR_INFO_TIMESTAMP_SOURCE`。`CameraFrameHub` 唯一 Camera2 owner，YUV 给 VIO、I420 给 WebRTC。本地 `SpatialTracker` 投影 3D waypoint。`tracking_lost` 或本地 `TrackQuality.LOST` 不画箭头。看 log `spatial probe` / `spatial sync usable=`。
 - 不要做：WebRTC `Camera2Capturer` 再开一个会话；麦开着高频发 pose；无导视时编完整室内路线。
 
@@ -195,7 +195,7 @@
 - 场景：用户问眼镜 App 打开时能否自动开 Wi-Fi。USB 插着时固件仍会把 `wifi_on` 置 0。
 - 误判：只能等 `p2p.offer` 或手动开；`setWifiEnabled` 在 targetSdk 34 上一定够用。
 - 根因：Android Q 之后普通应用开 Wi-Fi 常被拦。`GlassWifi.hold()` 必须在 `Application.onCreate` 就跑，并用 `svc wifi enable` / `settings put global wifi_on 1`。`WRITE_SECURE_SETTINGS` 要用眼镜 ADB `pm grant`。
-- 以后先做：`GlassApp` 启动即 `hold()`，Activity 不要 `release()`。装完 APK 后 `pm grant com.glass.nav.glass android.permission.WRITE_SECURE_SETTINGS`。看 log `wifi hold start` / `setWifiEnabled` / `svc wifi enable`。
+- 以后先做：`GlassApp` 启动即 `hold()`，Activity 不要 `release()`。装完 APK 后 `pm grant com.glass.dining.glass android.permission.WRITE_SECURE_SETTINGS`。看 log `wifi hold start` / `setWifiEnabled` / `svc wifi enable`。
 - 不要做：等导航或开流才开 Wi-Fi；为开 Wi-Fi 拔 USB；Activity `onDestroy` 停掉保活。
 
 ## 2026-08-27 — USB 插着时眼镜 Wi-Fi 会被固件关掉，Direct 必挂
@@ -210,8 +210,8 @@
 
 - 场景：没开到餐 App，镜片系统 UI 完全不显示，像光机坏了。
 - 误判：光机死了；USB 把显示踢掉了。
-- 根因：CXR 会话类型 `CUSTOMAPP` 会把 `com.glass.nav.glass` 拉到前台，主题是全屏黑底。手机 App 被杀掉时没调 `appStop`，眼镜页继续占着合成器。USB 仍枚举但眼镜 `adb` 经常握手断，没法 `force-stop`。
-- 以后先做：退出到餐时 `appStop`。眼镜收到手机断开就 `finishAndRemoveTask`。现场恢复：`am start ... --ez stop_glass true`，或眼镜 ADB 通了之后 `am force-stop com.glass.nav.glass` 再 `KEYCODE_WAKEUP`。不要拔 USB。
+- 根因：CXR 会话类型 `CUSTOMAPP` 会把 `com.glass.dining.glass` 拉到前台，主题是全屏黑底。手机 App 被杀掉时没调 `appStop`，眼镜页继续占着合成器。USB 仍枚举但眼镜 `adb` 经常握手断，没法 `force-stop`。
+- 以后先做：退出到餐时 `appStop`。眼镜收到手机断开就 `finishAndRemoveTask`。现场恢复：`am start ... --ez stop_glass true`，或眼镜 ADB 通了之后 `am force-stop com.glass.dining.glass` 再 `KEYCODE_WAKEUP`。不要拔 USB。
 - 不要做：把「镜片全黑」先当成硬件坏了；为了恢复显示让人拔数据线。
 
 ## 2026-08-27 — 手机 Direct 组已建好，眼镜没加入就把画面关了
@@ -315,12 +315,12 @@
 - 场景：到餐切 `CUSTOMAPP` 后点对话，镜片闲置卡在，说话没反应。状态一闪「startAudioStream 未发出」随后变成「镜片到餐页在前台」。
 - 误判：乐奇没勾麦克风；或 `hasGlassPermission(MICROPHONE)` 为 false。
 - 根因：`AuthorizationHelper` 已是 true。CXR-L `startAudioStream(1)` 仍返回 false（媒体通道在 CustomApp 下发不出去）。`onGlassAppResume` 又把失败文案盖掉。对话 `talking=true`，但没有 PCM，Vosk 无输入。
-- 以后先做：CustomApp 用眼镜 `AudioRecord` 16 kHz mono，经 `mic.on` / `pcm` Caps 送到手机 Vosk。`adb shell pm grant com.glass.nav.glass android.permission.RECORD_AUDIO`。不要用 resume 文案覆盖收声失败。
+- 以后先做：CustomApp 用眼镜 `AudioRecord` 16 kHz mono，经 `mic.on` / `pcm` Caps 送到手机 Vosk。`adb shell pm grant com.glass.dining.glass android.permission.RECORD_AUDIO`。不要用 resume 文案覆盖收声失败。
 - 不要做：CustomApp 会话里把 CXR-L `startAudioStream` 当眼镜麦；看到「到餐页在前台」就当已经在听。
 
 ## 2026-08-26 — 小米拦截新包 USB 安装
 
-- 场景：眼镜 APK `adb install` 成功，新包 `com.glass.nav.phone` 报 `INSTALL_FAILED_USER_RESTRICTED`。
+- 场景：眼镜 APK `adb install` 成功，当时实验手机包 `com.glass.nav.phone`（已删除）报 `INSTALL_FAILED_USER_RESTRICTED`。
 - 误判：签名不对、要 `-g`、或 `pm install --user 0` 能绕过。
 - 根因：MIUI「应用安装拦截」拦住了 USB 装的「室内导航」。通知文案：已拦截通过USB安装的室内导航。
 - 以后先做：让用户在通知里允许这次安装，再 `adb install -r`。已装过的旧包更新一般不会拦。

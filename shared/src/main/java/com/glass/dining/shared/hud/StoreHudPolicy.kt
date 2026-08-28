@@ -7,13 +7,12 @@ object StoreHudPolicy {
     const val IDLE_MS = 7_000L
 
     private val KEEP = setOf(
-        AgentToolCatalog.ASK_STORE.name,
+        AgentToolCatalog.GET_PLACE_DETAILS.name,
         AgentToolCatalog.SELECT_STORE.name,
-        AgentToolCatalog.LOOK_STORE.name,
+        AgentToolCatalog.LOOK_AT_SCENE.name,
         AgentToolCatalog.RECOMMEND.name,
         AgentToolCatalog.START_NAV.name,
         AgentToolCatalog.STOP_NAV.name,
-        AgentToolCatalog.READ_MENU.name,
         AgentToolCatalog.LIST_COUPONS.name,
         AgentToolCatalog.SCAN_COUPON.name,
         AgentToolCatalog.REDEEM.name,

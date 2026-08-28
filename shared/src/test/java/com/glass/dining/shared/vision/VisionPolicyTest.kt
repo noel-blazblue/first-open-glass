@@ -1,15 +1,14 @@
 package com.glass.dining.shared.vision
 
+import com.glass.dining.shared.catalog.DiningMatcher
 import com.glass.dining.shared.catalog.MemoryStoreCatalog
 import com.glass.dining.shared.catalog.StoreFixtures
 import com.glass.dining.shared.catalog.StoreGeo
-import com.glass.dining.shared.engine.DiningMatcher
-import com.glass.dining.shared.engine.DiningSession
-import com.glass.dining.shared.engine.StoreVision
+import com.glass.dining.shared.catalog.StoreVision
 import com.glass.dining.shared.mock.MockCommerce
-import com.glass.dining.shared.model.ActiveSkill
 import com.glass.dining.shared.model.LookInput
 import com.glass.dining.shared.model.ScoredStore
+import com.glass.dining.shared.session.DiningSession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -242,12 +241,16 @@ class VisionPolicyTest {
 
     @Test
     fun visionSkillMapsEverySceneTool() {
+        assertEquals(VisionIntent.LOOK_STORE, VisionSkill.intentForTool("look_at_scene", "store"))
         assertEquals(VisionIntent.LOOK_STORE, VisionSkill.intentForTool("look_store"))
+        assertEquals(VisionIntent.READ_SIGN, VisionSkill.intentForTool("look_at_scene"))
+        assertEquals(VisionIntent.READ_SIGN, VisionSkill.intentForTool("look_at_scene", "observe"))
         assertEquals(VisionIntent.READ_SIGN, VisionSkill.intentForTool("read_sign"))
+        assertEquals(VisionIntent.READ_MENU, VisionSkill.intentForTool("look_at_scene", "menu"))
         assertEquals(VisionIntent.READ_MENU, VisionSkill.intentForTool("read_menu"))
         assertEquals(VisionIntent.SCAN_COUPON, VisionSkill.intentForTool("scan_coupon"))
         assertEquals(VisionIntent.CHECKOUT, VisionSkill.intentForTool("checkout"))
-        assertEquals(5, VisionSkill.TOOLS.size)
+        assertEquals(3, VisionSkill.TOOLS.size)
         assertTrue(VisionSkill.TOOLS.all { VisionSkill.isVisionTool(it) })
         assertNull(VisionSkill.intentForTool("recommend"))
         assertNull(VisionSkill.intentForTool("start_nav"))
@@ -257,17 +260,19 @@ class VisionPolicyTest {
     fun sameFrameRoutesAllVisionIntents() {
         val ranked = StoreVision.rankStores(stores, "青田小馆火锅")
         val frame = extract(ocr = "青田小馆火锅")
-        val byTool = VisionSkill.TOOLS.associateWith { tool ->
-            VisionPolicy.decide(VisionSkill.intentForTool(tool)!!, frame, ranked)
-        }
-        assertEquals(VisionDecision.TEXT_ONLY, byTool.getValue(VisionSkill.LOOK_STORE).decision)
-        assertEquals(VisionDecision.TEXT_ONLY, byTool.getValue(VisionSkill.READ_SIGN).decision)
-        assertTrue(byTool.getValue(VisionSkill.READ_MENU).needsLlm)
-        assertTrue(byTool.getValue(VisionSkill.SCAN_COUPON).needsLlm)
-        assertEquals(VisionDecision.RECAPTURE, byTool.getValue(VisionSkill.CHECKOUT).decision)
-        byTool.forEach { (tool, outcome) ->
-            assertEquals(tool, VisionSkill.TOOLS.first { VisionSkill.intentForTool(it) == outcome.intent })
-        }
+        val lookStore = VisionPolicy.decide(VisionSkill.intentForTool("look_at_scene", "store")!!, frame, ranked)
+        val observe = VisionPolicy.decide(VisionSkill.intentForTool("look_at_scene")!!, frame, ranked)
+        val menu = VisionPolicy.decide(VisionSkill.intentForTool("look_at_scene", "menu")!!, frame, ranked)
+        val coupon = VisionPolicy.decide(VisionSkill.intentForTool(VisionSkill.SCAN_COUPON)!!, frame, ranked)
+        val checkout = VisionPolicy.decide(VisionSkill.intentForTool(VisionSkill.CHECKOUT)!!, frame, ranked)
+        assertEquals(VisionDecision.TEXT_ONLY, lookStore.decision)
+        assertEquals(VisionDecision.TEXT_ONLY, observe.decision)
+        assertTrue(menu.needsLlm)
+        assertTrue(coupon.needsLlm)
+        assertEquals(VisionDecision.RECAPTURE, checkout.decision)
+        assertEquals(VisionIntent.LOOK_STORE, lookStore.intent)
+        assertEquals(VisionIntent.READ_SIGN, observe.intent)
+        assertEquals(VisionIntent.READ_MENU, menu.intent)
     }
 
     @Test
@@ -295,10 +300,9 @@ class VisionPolicyTest {
         val session = DiningSession(catalog)
         session.look(forceStoreId = "store_hotpot")
         assertNotNull(session.currentStore)
-        assertEquals(ActiveSkill.BROWSE, session.activeSkill)
         session.clearLook()
         assertNull(session.currentStore)
-        assertEquals(ActiveSkill.NONE, session.activeSkill)
+        assertFalse(session.navigating)
     }
 
     @Test

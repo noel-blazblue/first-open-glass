@@ -2,7 +2,7 @@
 
 连接问题先读本文，再改代码。不要把五条链路混称为「眼镜连不上」。闭环后同步更新本文和 `.cursor/skills/glass-dev/lessons.md`。
 
-眼镜 APK **只能**电脑 ADB 直装，见 `AGENTS.md` 硬规则与 `:apps:glass-nav:installGlassAdb`。
+眼镜 APK **只能**电脑 ADB 直装，见 `AGENTS.md` 硬规则与 `:apps:glass:installGlassAdb`。
 
 ## 五条链路（外加 PCM）
 
@@ -39,14 +39,14 @@
 1. `adb devices -l`：有没有眼镜、有没有手机。命令一律 `adb -s <serial>`。
 2. 手机连接诊断面板：哪一层不是「已就绪」。
 3. 手机 log：`adb -s <phone> logcat -s GlassDiningPhone:I PhoneP2p:I PhoneRtc:I`
-4. 眼镜 log：`adb -s <glass> logcat -s GlassP2p:I GlassRtc:I NavActivity:I`
+4. 眼镜 log：`adb -s <glass> logcat -s GlassP2p:I GlassRtc:I GlassApp:I`
 5. 只修当前层。不要同时重装 APK、重连乐奇、重建 Direct。
 
 最小命令：
 
 ```bash
 adb devices -l
-adb -s <glass> shell dumpsys package com.glass.nav.glass | rg "versionName|versionCode|targetSdk"
+adb -s <glass> shell dumpsys package com.glass.dining.glass | rg "versionName|versionCode|targetSdk"
 adb -s <glass> shell settings get global wifi_on
 adb -s <glass> shell dumpsys wifi | rg "Wi-Fi is |mWifiState"
 adb -s <phone> shell dumpsys wifi | rg "mP2pGroup|networkName|interface"
@@ -85,7 +85,7 @@ adb -s <phone> shell dumpsys wifi | rg "mP2pGroup|networkName|interface"
 
 ### 10. CustomApp 不在前台却继续建组
 
-- 现象：手机停在「眼镜 Wi-Fi 正在打开」，镜片黑屏。`pidof com.glass.nav.glass` 空，焦点在乐奇桌面。
+- 现象：手机停在「眼镜 Wi-Fi 正在打开」，镜片黑屏。`pidof com.glass.dining.glass` 空，焦点在乐奇桌面。
 - 根因：`onGlassAppResume(false)` 只清 `hudOpened`，`glassReady` 仍为 true。`begin()` 跳过 `GlassStarting`，offer 没人接。手机 App 已在前台时不会再走 `connect()`/`onLinkReady()`。
 - 最终设计：离开前台立刻清 `ready`。宽限结束后 `onGlassLost` 回到 `GlassStarting` 并 `ensure`。打开到餐必须 `phoneWantsGlass` + `ensure`。
 - 禁止再做：用过期的 `glassReady` 发 `p2p.offer`；用 ADB `am start` 代替 CXR `appStart`。

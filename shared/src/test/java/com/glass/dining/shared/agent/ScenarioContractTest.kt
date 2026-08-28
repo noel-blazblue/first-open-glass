@@ -31,7 +31,7 @@ class ScenarioContractTest {
         assertTrue(prompt.contains("眼前"))
         assertTrue(prompt.contains("look_at_scene"))
         assertFalse(AgentToolCatalog.LOOK_AT_SCENE.description.contains("回答周围有什么"))
-        assertTrue(AgentToolCatalog.LOOK_AT_SCENE.description.contains("不是搜附近地点"))
+        assertTrue(AgentToolCatalog.LOOK_AT_SCENE.description.contains("不要用此工具搜附近地点"))
     }
 
     @Test

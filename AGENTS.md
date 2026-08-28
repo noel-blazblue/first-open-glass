@@ -4,7 +4,7 @@
 
 ## 开发立场
 
-眼镜端主应用是 **CustomApp**（`apps/glass-nav`），按 **原生 Android** 开发：Camera2、WifiP2p、WebRTC、AudioRecord、Wi‑Fi、定位等都是系统能力。这副眼镜能跑的 Android API，我们理论上都能做，**不要**用「消费版没有 / 企业版才有」自我设限，更不要把企业 `GlassSdk` / `PSecuritySDK` 当成唯一实现路径。
+眼镜端主应用是 **CustomApp**（`apps/glass`），按 **原生 Android** 开发：Camera2、WifiP2p、WebRTC、AudioRecord、Wi‑Fi、定位等都是系统能力。这副眼镜能跑的 Android API，我们理论上都能做，**不要**用「消费版没有 / 企业版才有」自我设限，更不要把企业 `GlassSdk` / `PSecuritySDK` 当成唯一实现路径。
 
 乐奇（`com.rokid.sprite.aiapp`）+ CXR-L 只负责：连眼镜、CustomView 会话、把我们的 CustomApp 拉到前台。HUD 通道和信令走已验证的 CXR CustomCmd；媒体、组网、相机以 Android 原生为准。
 
@@ -22,9 +22,8 @@
 
 ## 仓库约定
 
-- 对用户用中文回复。
-- 主应用是 `apps/phone`：到餐 Agent，`CXRLink`，会话类型 `CUSTOMAPP`，乐奇包名 `com.rokid.sprite.aiapp`。`apps/phone-nav` 不是产品入口。
-- `apps/glass` 是归档实验，不参与本期验收。
+- 主应用是 `apps/phone`：到餐 Agent，`CXRLink`，会话类型 `CUSTOMAPP`，乐奇包名 `com.rokid.sprite.aiapp`。
+- 眼镜 CustomApp 是 `apps/glass`，包名 `com.glass.dining.glass`。
 - 人读需求在 `demand.md`。
 - 真机系统版本号不含 `e` 时，不要把企业专有 SDK 硬接到主路径；缺的能力优先用 CustomApp 原生实现。
 - **做通用型智能 Agent，禁止定制化、写死业务。** 见下方「通用 Agent」。
@@ -38,9 +37,9 @@
 
 ## 眼镜 APK 安装（硬规则）
 
-`apps/glass-nav` **只能**通过电脑 ADB 直装，禁止任何手机/CXR 中转。
+`apps/glass` **只能**通过电脑 ADB 直装，禁止任何手机/CXR 中转。
 
-- 命令：`adb -s <RG_glasses serial> install -r ...`，或 `./gradlew :apps:glass-nav:installGlassAdb`。
+- 命令：`adb -s <RG_glasses serial> install -r ...`，或 `./gradlew :apps:glass:installGlassAdb`。
 - 安装前必须 `adb devices -l`。眼镜未出现、或 `model:RG_glasses` 匹配不到 / 匹配到多台时 **立即停止并报告**，禁止改走手机、`CXRLink.appUploadAndInstall`、把 APK 推进手机目录再上传。
 - 手机和眼镜按 `model` / serial 分别校验后再装：手机 `installDebug` 必须设 `ANDROID_SERIAL`（AGP 否则会装到所有设备，包括眼镜），眼镜用 `GLASS_SERIAL` 或唯一 `model:RG_glasses`。禁止依赖默认 adb 设备。
 - `apps/phone:installDebug` 只装手机包并同步手机 `.env`，不再构建或推送眼镜 APK。
@@ -87,5 +86,5 @@
 1. 手机已装乐奇并连上这副眼镜。
 2. 连接失败先查 `lessons.md`（双回调、token、乐奇版本），再改代码。
 3. 改动 `apps/phone` 代码后，必须安装到手机上。
-4. 改动 `apps/glass-nav` 后，必须用 `installGlassAdb` 直装到眼镜，禁止用手机更新眼镜包。
+4. 改动 `apps/glass` 后，必须用 `installGlassAdb` 直装到眼镜，禁止用手机更新眼镜包。
 5. 这是生产级别的应用，禁止 mock 数据。

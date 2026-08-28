@@ -3,28 +3,12 @@ package com.glass.dining.shared.agent
 object AgentToolCatalog {
     val LOOK_AT_SCENE = spec(
         "look_at_scene",
-        "看眼镜当前画面或已有环境记录。用于问眼前看见什么、几楼、路牌。不是搜附近地点。返回观察，不是门店事实。问几楼时先读近期楼层观察。",
-        """{"type":"object","properties":{"reason":{"type":"string"}}}""",
-    )
-    val LOOK_STORE = spec(
-        "look_store",
-        "用户明确要认店时，从眼镜画面看店招。只有OCR唯一命中目录、或可核验店名、或用户确认后才绑定门店。",
-        """{"type":"object","properties":{"reason":{"type":"string"}}}""",
-    )
-    val READ_SIGN = spec(
-        "read_sign",
-        "读路牌或入口。导航中问路牌时调用。不要改路线。",
-        """{"type":"object","properties":{"reason":{"type":"string"}}}""",
-    )
-    val READ_MENU = spec(
-        "read_menu",
-        "读菜单。需要已确认的餐饮门店。",
-        """{"type":"object","properties":{"reason":{"type":"string"}}}""",
-        parallelSafe = false,
+        "看眼镜画面或已有环境记录。purpose=observe 只返回观察（含路牌、几楼），不能绑定门店、不能改路线；purpose=store 才尝试认店，须证据门通过才绑定；purpose=menu 读菜单，必须已有绑定门店。不传 purpose 时：导航中当观察，否则当观察。不要用此工具搜附近地点。",
+        """{"type":"object","properties":{"purpose":{"type":"string","enum":["observe","store","menu"]},"reason":{"type":"string"}}}""",
     )
     val SEARCH_NEARBY = spec(
         "search_nearby_places",
-        "用定位搜索附近公开地点。keyword 必须是具体地点名、品类或设施名。用户说附近有什么门店、有啥店、找店等泛指时，按到店餐饮把 keyword 写成美食或餐厅，不要传门店、附近、推荐。返回里可能有高德评分、人均、营业时间、电话、楼层；没有的字段不要编。不要编排队和优惠。",
+        "用定位搜索附近公开地点。keyword 必须是具体地点名、品类或设施名。用户说附近有什么门店、有啥店、找店等泛指时，按到店餐饮把 keyword 写成美食或餐厅，不要传门店、附近、推荐。返回里可能有评分、人均、营业时间、电话、楼层；没有的字段不要编。不要编排队和优惠。对用户说话不要提地图供应商名称。",
         """{"type":"object","properties":{"keyword":{"type":"string"},"radius":{"type":"integer"}},"required":["keyword"]}""",
         requiredCapability = "gps",
     )
@@ -60,10 +44,11 @@ object AgentToolCatalog {
         """{"type":"object","properties":{"index":{"type":"integer"},"name":{"type":"string"},"store_id":{"type":"string"},"place_id":{"type":"string"}}}""",
         parallelSafe = false,
     )
-    val ASK_STORE = spec(
-        "ask_store",
-        "询问已确认地点的资料。公开地点可答高德已给出的评分、人均、营业时间、电话、地址、楼层；字段缺失就说没有。排队、招牌、优惠、包间只有 catalog_backed 才能说。",
-        """{"type":"object","properties":{"question":{"type":"string"}}}""",
+    val GET_PLACE_DETAILS = spec(
+        "get_place_details",
+        "获取一家地点的综合资料：本地到餐目录与公开地点资料合并。必须传入 name、place_id 或 index 之一，表示用户在问哪家；不要猜第一家，不要绑定当前店。公开地点没有排队、招牌、优惠就说没有。对用户说话不要提地图供应商名称。",
+        """{"type":"object","properties":{"name":{"type":"string"},"place_id":{"type":"string"},"index":{"type":"integer"}}}""",
+        parallelSafe = false,
     )
     val LIST_COUPONS = spec(
         "list_coupons",
@@ -93,13 +78,17 @@ object AgentToolCatalog {
     )
 
     val ALL: List<ToolSpec> = listOf(
-        LOOK_AT_SCENE, LOOK_STORE, READ_SIGN, SEARCH_NEARBY, RESOLVE_DEST, START_NAV, STOP_NAV,
-        RECOMMEND, SELECT_STORE, ASK_STORE, READ_MENU, LIST_COUPONS, SCAN_COUPON, REDEEM, CHECKOUT,
+        LOOK_AT_SCENE, SEARCH_NEARBY, RESOLVE_DEST, START_NAV, STOP_NAV,
+        RECOMMEND, SELECT_STORE, GET_PLACE_DETAILS, LIST_COUPONS, SCAN_COUPON, REDEEM, CHECKOUT,
     )
 
     val ALIASES = mapOf(
         "start_nav" to START_NAV.name,
         "stop_nav" to STOP_NAV.name,
+        "look_store" to LOOK_AT_SCENE.name,
+        "read_sign" to LOOK_AT_SCENE.name,
+        "read_menu" to LOOK_AT_SCENE.name,
+        "ask_store" to GET_PLACE_DETAILS.name,
     )
 
     fun byName(name: String): ToolSpec? {
@@ -130,7 +119,7 @@ object AgentPrompts {
 【到店美食与餐饮探索】
 场景：发现餐厅、了解排队人均菜单优惠、选定要去的店。
 何时使用：用户提到餐饮品类或店名；或泛指就餐/找店，如附近有什么门店、有啥店、找店、有啥好吃的、找个地方坐坐、整点垫肚子的。
-怎么做：本地目录大于 0 家时优先 recommend；目录为空或未命中时用 search_nearby_places，把泛指改写成美食或餐厅，禁止把门店、附近、推荐当 keyword。排队、招牌、优惠、包间只有 catalog_backed 才能说。公开地点根据工具返回和高德门店资料回答评分、人均、营业时间、电话、地址、楼层；没有的字段说没有，不要编。
+怎么做：本地目录大于 0 家时优先 recommend；目录为空或未命中时用 search_nearby_places，把泛指改写成美食或餐厅，禁止把门店、附近、推荐当 keyword。排队、招牌、优惠、包间只有 catalog_backed 才能说。问某家店的评分、人均、营业、电话、地址时用 get_place_details，必须带上 name 或 place_id 或 index，不要猜第一家，不要为此绑定当前店。工具返回没有的字段说没有，不要编。对用户说话不要提地图供应商名称。
 
 【附近公共设施与通用地点】
 场景：找非餐饮的生活设施或公开地点。
@@ -140,7 +129,7 @@ object AgentPrompts {
 【现实环境与视觉问答】
 场景：基于眼镜画面或近期观察回答眼前看见什么。
 何时使用：问眼前/前面是什么、看一下、这是什么店、我在几楼。
-怎么做：先读【当前视野】和【近期观察】。信息不足再 look_at_scene；用户明确要认店招时 look_store。观察不是门店事实，没有确认前不要说「这就是某店」。问几楼时优先【用户所在】里用户确认的层号，其次视觉楼层标识。
+怎么做：先读【当前视野】和【近期观察】。信息不足再 look_at_scene（purpose=observe）。用户明确要认店招时 look_at_scene 且 purpose=store。观察不是门店事实，没有确认前不要说「这就是某店」。问几楼时优先【用户所在】里用户确认的层号，其次视觉楼层标识。看菜单用 purpose=menu，且必须已有绑定门店。导航中问路牌用 observe，不要改路线。
 
 【步行导航与目的地】
 场景：解析目的地并开始或停止步行导航。
@@ -160,7 +149,7 @@ object AgentPrompts {
 - 【用户所在】只来自用户确认或可靠视觉证据。没有证据时写未知，不要用 GPS 权限或绑定门店去猜人所在。
 - 【当前视野】是此刻看着的画面，不是门店事实，也不能覆盖【近期观察】里的楼层标识。
 - 【当前活动】里「观察到」才是画面直接看到的；「根据连续证据判断」和「推断」不能说成亲眼看见。
-- 【门店资料】是已绑定地点的字段（高德或本地目录）。用户问评分、人均、营业时间、电话、地址、楼层时直接用；没有的字段说没有，不要编排队和优惠。
+- 【门店资料】是地点字段（公开资料或本地目录）。用户问评分、人均、营业时间、电话、地址、楼层时用 get_place_details 的返回；没有的字段说没有，不要编排队和优惠。对用户不要提地图供应商。
 - 天气、百科等没有对应工具时，如实说能力边界，不要强行调用地点工具。"""
 
     const val VISION = """你在看眼镜抽到的一帧。只输出一个 JSON，不要 markdown：

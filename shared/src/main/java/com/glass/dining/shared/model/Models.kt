@@ -50,15 +50,6 @@ data class StoreSummary(
     val distanceMeters: Int,
 )
 
-enum class ActiveSkill {
-    NONE,
-    BROWSE,
-    NAV,
-    MENU,
-    COUPON,
-    PAY,
-}
-
 data class MenuItem(
     val name: String,
     val price: Int,
