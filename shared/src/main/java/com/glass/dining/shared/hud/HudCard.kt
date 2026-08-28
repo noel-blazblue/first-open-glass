@@ -153,7 +153,7 @@ data class HudCard(
 
         fun shooting(@Suppress("UNUSED_PARAMETER") match: MatchResult? = null, current: HudCard? = null): HudCard {
             if (current != null && current.isNav) return current
-            return talk("正在拍照", pose = POSE_LOOK)
+            return talk("正在查看", pose = POSE_LOOK)
         }
 
         fun fromMatch(result: MatchResult): HudCard {

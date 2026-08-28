@@ -43,6 +43,8 @@ data class SceneObservation(
 data class WorldContext(
     val boundPlace: PlaceRef? = null,
     val boundProfile: PlaceProfile? = null,
+    val viewingPlace: PlaceRef? = null,
+    val viewingProfile: PlaceProfile? = null,
     val disambiguation: List<PlaceRef> = emptyList(),
     val recentSearch: List<PlaceProfile> = emptyList(),
     val observation: SceneObservation? = null,

@@ -81,7 +81,7 @@ class DiningToolProvider(private val world: PhoneWorld) {
                         .toString()
                 }
             }
-            else -> world.session.lastMatch
+            else -> world.session.commitViewing()
                 ?: return JSONObject().put("ok", false).put("error", "还没有候选地点").toString()
         } ?: return JSONObject().put("ok", false).put("error", "没找到这家").toString()
         return finishSelect(result)
@@ -102,6 +102,7 @@ class DiningToolProvider(private val world: PhoneWorld) {
             catalog = world.session.catalog.stores(),
             nearby = world.latestPlaces(),
             candidates = world.session.candidates,
+            viewing = world.session.viewingStore?.let { PlaceResolver.fromStore(it) },
         )
         return when (looked) {
             PlaceLookupResult.NeedPointer -> JSONObject()
@@ -129,6 +130,8 @@ class DiningToolProvider(private val world: PhoneWorld) {
                 val merged = PlaceResolver.merge(world.session.catalog.stores(), listOf(looked.place) + world.latestPlaces())
                     .firstOrNull { it.id == looked.place.id || it.name == looked.place.name }
                     ?: looked.place
+                world.session.viewPlace(merged)
+                world.publishStore(merged, PlaceFacts.spokenSummary(PlaceResolver.toStore(merged)), "get_place_details")
                 PlaceFacts.write(JSONObject().put("ok", true).put("bound", false), merged)
                     .put("message", PlaceFacts.spokenSummary(PlaceResolver.toStore(merged)))
                     .toString()

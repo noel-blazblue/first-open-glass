@@ -3,7 +3,7 @@ package com.glass.dining.shared.agent
 object AgentToolCatalog {
     val LOOK_AT_SCENE = spec(
         "look_at_scene",
-        "抽眼镜当前画面并交给视觉模型。purpose=observe 只返回这一眼的观察，不能绑定门店、不能改路线；purpose=store 才尝试认店，须证据门通过才绑定；purpose=menu 读菜单，必须已有绑定门店。不要用环境记忆或近期观察代替这一眼。不要用此工具搜附近地点。问几楼先看【用户所在】，只有要对着眼前标识核实时才调用。",
+        "抽眼镜当前画面并交给视觉模型。purpose=observe 只返回这一眼的观察，不能绑定门店、不能改路线；purpose=store 才尝试认店，证据门通过后出门店卡，不绑定导航目的地；purpose=menu 读菜单，必须已有正在查看或已选定的门店。不要用环境记忆或近期观察代替这一眼。不要用此工具搜附近地点。问几楼先看【用户所在】，只有要对着眼前标识核实时才调用。",
         """{"type":"object","properties":{"purpose":{"type":"string","enum":["observe","store","menu"]},"reason":{"type":"string"}}}""",
     )
     val SEARCH_NEARBY = spec(
@@ -20,7 +20,7 @@ object AgentToolCatalog {
     )
     val START_NAV = spec(
         "start_navigation",
-        "开始步行导航。目的地可以是本地店或公开地点。用户说了店名传入 name，说了楼层传入 current_floor。",
+        "开始步行导航。目的地可以是本地店或公开地点。用户说了店名传入 name，说了楼层传入 current_floor。没传目的地时，若正在查看一家店则用那家；否则先问去哪家。禁止空目的开导航。",
         """{"type":"object","properties":{"name":{"type":"string"},"place_id":{"type":"string"},"store_id":{"type":"string"},"index":{"type":"integer"},"current_floor":{"type":"string"},"request_id":{"type":"string"}}}""",
         ToolRisk.WRITE,
         parallelSafe = false,
@@ -35,24 +35,24 @@ object AgentToolCatalog {
     )
     val RECOMMEND = spec(
         "recommend",
-        "按本地餐饮目录推荐餐厅。世界状态里本地目录大于 0 家时优先调用。目录为空或未命中时改用 search_nearby_places。query 写口味或附近，不要写门店。避免排队时 avoid_queue=true。",
+        "按本地餐饮目录推荐餐厅，会出门店卡，不绑定导航目的地。世界状态里本地目录大于 0 家时优先调用。目录为空或未命中时改用 search_nearby_places。query 写口味或附近，不要写门店。避免排队时 avoid_queue=true。",
         """{"type":"object","properties":{"query":{"type":"string"},"avoid_queue":{"type":"boolean"}}}""",
     )
     val SELECT_STORE = spec(
         "select_store",
-        "从候选里选定一家已确认的地点或餐饮店。",
+        "从候选或正在查看的店里选定一家，绑定为当前目的地并出门店卡。",
         """{"type":"object","properties":{"index":{"type":"integer"},"name":{"type":"string"},"store_id":{"type":"string"},"place_id":{"type":"string"}}}""",
         parallelSafe = false,
     )
     val GET_PLACE_DETAILS = spec(
         "get_place_details",
-        "获取一家地点的综合资料：本地到餐目录与公开地点资料合并。必须传入 name、place_id 或 index 之一，表示用户在问哪家；不要猜第一家，不要绑定当前店。公开地点没有排队、招牌、优惠就说没有。对用户说话不要提地图供应商名称。",
+        "获取一家地点的综合资料：本地到餐目录与公开地点资料合并。传入 name、place_id 或 index 表示问的是哪家；没指明时用正在查看的那家，不要猜第一家。查到唯一一家会出门店详情卡，不要绑定导航目的地。公开地点没有排队、招牌、优惠就说没有。对用户说话不要提地图供应商名称。",
         """{"type":"object","properties":{"name":{"type":"string"},"place_id":{"type":"string"},"index":{"type":"integer"}}}""",
         parallelSafe = false,
     )
     val LIST_COUPONS = spec(
         "list_coupons",
-        "列出当前餐饮门店的演示美团券。",
+        "列出正在查看或已选定餐饮门店的演示美团券。",
         """{"type":"object","properties":{}}""",
         parallelSafe = false,
     )
@@ -119,7 +119,7 @@ object AgentPrompts {
 【到店美食与餐饮探索】
 场景：发现餐厅、了解排队人均菜单优惠、选定要去的店。
 何时使用：用户提到餐饮品类或店名；或泛指就餐/找店，如附近有什么门店、有啥店、找店、有啥好吃的、找个地方坐坐、整点垫肚子的。
-怎么做：本地目录大于 0 家时优先 recommend；目录为空或未命中时用 search_nearby_places，把泛指改写成美食或餐厅，禁止把门店、附近、推荐当 keyword。排队、招牌、优惠、包间只有 catalog_backed 才能说。问某家店的评分、人均、营业、电话、地址时用 get_place_details，必须带上 name 或 place_id 或 index，不要猜第一家，不要为此绑定当前店。工具返回没有的字段说没有，不要编。对用户说话不要提地图供应商名称。
+怎么做：本地目录大于 0 家时优先 recommend；目录为空或未命中时用 search_nearby_places，把泛指改写成美食或餐厅，禁止把门店、附近、推荐当 keyword。排队、招牌、优惠、包间只有 catalog_backed 才能说。问某家店的评分、人均、营业、电话、地址时用 get_place_details，用户说了店名或第几家必须带上 name 或 place_id 或 index，不要猜搜索列表第一家；正在查看时可以不带。查到唯一一家会出门店卡，不要为此绑定导航目的地。用户要去这家才 select_store。工具返回没有的字段说没有，不要编。对用户说话不要提地图供应商名称。
 
 【附近公共设施与通用地点】
 场景：找非餐饮的生活设施或公开地点。
@@ -129,12 +129,12 @@ object AgentPrompts {
 【现实环境与视觉问答】
 场景：用户要看眼前现在是什么。
 何时使用：问眼前/前面是什么、看一下、这是什么店；或要核实现场楼层标识。
-怎么做：必须 look_at_scene，不要用【当前视野】或【近期观察】当这一眼的答案。purpose=observe 看现在；认店招用 purpose=store；看菜单用 purpose=menu 且必须已有绑定门店。观察不是门店事实，没有确认前不要说「这就是某店」。问几楼时用【用户所在】里已有的层号；只有用户要你看眼前标识确认层号时才调用工具。导航中问路牌用 observe，不要改路线。
+怎么做：必须 look_at_scene，不要用【当前视野】或【近期观察】当这一眼的答案。purpose=observe 看现在；认店招用 purpose=store，出门店卡但不绑定目的地；看菜单用 purpose=menu 且必须已有正在查看或已选定的门店。观察不是门店事实，没有确认前不要说「这就是某店」。问几楼时用【用户所在】里已有的层号；只有用户要你看眼前标识确认层号时才调用工具。导航中问路牌用 observe，不要改路线。
 
 【步行导航与目的地】
 场景：解析目的地并开始或停止步行导航。
 何时使用：用户要去某地、带路、出发、取消导航、到了。
-怎么做：先 resolve_destination，唯一结果才能 start_navigation；多家先让用户选。没选地点不要空目的开导航。停导航用 stop_navigation。
+怎么做：先 resolve_destination，唯一结果才能 start_navigation；多家先让用户选。没选地点时，若【正在查看】有店可以出发，否则不要空目的开导航。停导航用 stop_navigation。
 
 【演示交易与优惠】
 场景：演示优惠券和支付。
@@ -145,7 +145,7 @@ object AgentPrompts {
 - Observation（场景观察、OCR、疑似门头、黄色横幅）不是 Fact。
 - 无提问时不要主动说话。用户问了才根据观察回答。导航安全提示除外。
 - 工具失败时根据返回解释、换工具或向用户补信息，不要改口成「目录没有」。目录没有时去搜附近，只有搜索也失败才说没找到。
-- 【当前任务】和【业务对象】描述用户要去哪、当前在处理哪家店。导航目的地、查看门店、服务门店都不是用户已经所在的地点。
+- 【当前任务】和【业务对象】描述用户要去哪、当前在处理哪家店。只有选定或导航后才有【业务对象】。【正在查看】只是浏览中的店，不是目的地，也不是用户已经所在的地点。
 - 【用户所在】只来自用户确认或可靠视觉证据。没有证据时写未知，不要用 GPS 权限或绑定门店去猜人所在。
 - 【当前视野】是后台环境摘要，不是用户点名看的那一帧，也不能覆盖【用户所在】里的楼层。
 - 【当前活动】里「观察到」才是画面直接看到的；「根据连续证据判断」和「推断」不能说成亲眼看见。

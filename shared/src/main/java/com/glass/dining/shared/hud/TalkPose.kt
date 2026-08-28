@@ -17,7 +17,7 @@ enum class TalkPose(val id: String) {
             if (!raw.isNullOrBlank()) return parse(raw)
             return when {
                 speech.contains("思考") -> THINK
-                speech.contains("拍照") -> LOOK
+                speech.contains("查看") || speech.contains("拍照") -> LOOK
                 speech.isBlank() || speech == "Hi, 我在听" -> LISTEN
                 else -> SPEAK
             }

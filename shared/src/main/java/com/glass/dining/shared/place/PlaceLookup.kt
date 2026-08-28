@@ -12,8 +12,10 @@ object PlaceLookup {
         catalog: List<Store>,
         nearby: List<PlaceProfile>,
         candidates: List<Store> = emptyList(),
+        viewing: PlaceProfile? = null,
     ): PlaceLookupResult {
         if (placeId.isBlank() && name.isBlank() && index !in 1..9) {
+            viewing?.let { return PlaceLookupResult.Found(it) }
             return PlaceLookupResult.NeedPointer
         }
         if (placeId.isNotBlank()) {

@@ -105,13 +105,13 @@ class NavigationToolProvider(private val world: PhoneWorld) {
             }
             world.bindPlace(picked)
             world.selectedThisTurn = true
+        } else if (world.session.currentStore == null) {
+            val shown = world.session.commitViewing()
+            if (shown != null) world.selectedThisTurn = true
         }
         val store = world.session.currentStore
         if (store == null) {
             return error("no_store", "还没确定目的地。可以说地点名，我先搜索附近。")
-        }
-        if (world.recommendedThisTurn && !world.selectedThisTurn) {
-            return error("no_store", "先问去哪家，选定后才能导航")
         }
         val spoken = args.optString("current_floor").ifBlank { world.currentFloor }.ifBlank { world.spokenFloor }
         val failed = world.startNav(spoken)
@@ -150,7 +150,8 @@ class NavigationToolProvider(private val world: PhoneWorld) {
             world.latestPlaces().firstOrNull { it.name.contains(name) }?.let { return it }
             StoreVision.matchStore(world.session.catalog.stores(), name)?.let { return PlaceResolver.fromStore(it) }
         }
-        return world.session.currentStore?.let { PlaceResolver.fromStore(it) }
+        return world.session.viewingStore?.let { PlaceResolver.fromStore(it) }
+            ?: world.session.currentStore?.let { PlaceResolver.fromStore(it) }
     }
 
     private fun resolveJson(resolved: DestinationResolve): String {

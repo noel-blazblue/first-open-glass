@@ -13,12 +13,32 @@ class DiningSessionTest {
     fun dismissNavKeepsBoundPlace() {
         val session = DiningSession(MemoryStoreCatalog(StoreFixtures.twoNearby()))
         session.look(forceStoreId = "store_hotpot")
+        assertNotNull(session.viewingStore)
         assertTrue(session.startNav())
         assertTrue(session.navigating)
         val left = session.dismiss(DismissReason.REPLACE)
         assertEquals(HudSurface.NAV, left)
         assertFalse(session.navigating)
         assertNotNull(session.currentStore)
+    }
+
+    @Test
+    fun lookShowsWithoutBinding() {
+        val session = DiningSession(MemoryStoreCatalog(StoreFixtures.twoNearby()))
+        session.look(forceStoreId = "store_hotpot")
+        assertNotNull(session.viewingStore)
+        assertEquals(null, session.currentStore)
+        session.select("store_hotpot")
+        assertEquals("store_hotpot", session.currentStore?.id)
+    }
+
+    @Test
+    fun startNavCommitsViewing() {
+        val session = DiningSession(MemoryStoreCatalog(StoreFixtures.twoNearby()))
+        session.look(forceStoreId = "store_hotpot")
+        assertEquals(null, session.currentStore)
+        assertTrue(session.startNav())
+        assertEquals("store_hotpot", session.currentStore?.id)
     }
 
     @Test
@@ -30,6 +50,7 @@ class DiningSessionTest {
         assertTrue(session.hasPendingConfirm)
         session.dismiss(DismissReason.CANCEL)
         assertFalse(session.hasPendingConfirm)
-        assertNotNull(session.currentStore)
+        assertNotNull(session.viewingStore)
+        assertEquals(null, session.currentStore)
     }
 }

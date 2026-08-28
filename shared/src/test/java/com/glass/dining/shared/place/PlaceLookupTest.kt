@@ -13,6 +13,14 @@ class PlaceLookupTest {
     )
 
     @Test
+    fun viewingFallbackWhenNoPointer() {
+        val viewing = nearby.first()
+        val result = PlaceLookup.find(catalog = catalog, nearby = nearby, viewing = viewing)
+        assertTrue(result is PlaceLookupResult.Found)
+        assertEquals("望京药店", (result as PlaceLookupResult.Found).place.name)
+    }
+
+    @Test
     fun needPointerWhenNoHandle() {
         val result = PlaceLookup.find(catalog = catalog, nearby = nearby)
         assertTrue(result is PlaceLookupResult.NeedPointer)

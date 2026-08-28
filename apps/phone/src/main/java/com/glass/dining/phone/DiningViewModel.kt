@@ -450,7 +450,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun rememberSpokenStore() {
-        autoStoreShownId = session.currentStore?.id
+        autoStoreShownId = session.viewingStore?.id
     }
 
     fun toggleTalk() {
@@ -801,7 +801,6 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         if (visionBindStore && outcome.decision == VisionDecision.TEXT_ONLY && outcome.matchedStoreId != null) {
             val result = session.look(forceStoreId = outcome.matchedStoreId, visionHint = hint)
             if (result != null) {
-                selectedThisTurn = true
                 rememberVisionStore(result.store.id)
                 publishMatch(result, "端侧OCR认店")
                 return DiningToolProvider.facts(result)
@@ -870,7 +869,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun finishMenu(jpeg: ByteArray, outcome: VisionOutcome, source: String): String {
-        if (session.currentStore == null) {
+        if (session.viewingStore == null) {
             return JSONObject().put("ok", false).put("error", "还没确认门店，不能当事实读菜单").toString()
         }
         val items = if (outcome.needsLlm) {
@@ -878,18 +877,18 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 return JSONObject().put("ok", false).put("error", "视觉模型还没配好").toString()
             }
             val vision = PhoneAi.look(VisionRouter.bytesForLlm(jpeg, outcome), "read_menu", outcome.ocrText)
-            parseMenuItems(vision.speak + "\n" + outcome.ocrText).ifEmpty { MockCommerce.menuOf(session.currentStore) }
+            parseMenuItems(vision.speak + "\n" + outcome.ocrText).ifEmpty { MockCommerce.menuOf(session.viewingStore) }
         } else if (outcome.decision == VisionDecision.TEXT_ONLY && outcome.ocrText.isNotBlank()) {
-            parseMenuItems(outcome.ocrText).ifEmpty { MockCommerce.menuOf(session.currentStore) }
+            parseMenuItems(outcome.ocrText).ifEmpty { MockCommerce.menuOf(session.viewingStore) }
         } else {
-            MockCommerce.menuOf(session.currentStore)
+            MockCommerce.menuOf(session.viewingStore)
         }
         val menu = session.startMenu(items)
-        val card = HudCard.fromMenu(session.currentStore?.shortName.orEmpty(), menu)
-        publishSkillCard(card, "这是${session.currentStore?.shortName}的菜单", "read_menu")
+        val card = HudCard.fromMenu(session.viewingStore?.shortName.orEmpty(), menu)
+        publishSkillCard(card, "这是${session.viewingStore?.shortName}的菜单", "read_menu")
         return JSONObject()
             .put("ok", true)
-            .put("store", session.currentStore?.shortName)
+            .put("store", session.viewingStore?.shortName)
             .put("vision_route", outcome.reason)
             .put("vision_source", source)
             .put("items", menu.joinToString("；") { "${it.name}¥${it.price}" })
@@ -903,7 +902,6 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             if (storeId.isNotBlank()) {
                 val result = session.look(forceStoreId = storeId)
                 if (result != null) {
-                    selectedThisTurn = true
                     publishMatch(result, "桌码认店")
                 }
             }
@@ -911,7 +909,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 .put("ok", true)
                 .put("kind", "table")
                 .put("table", table)
-                .put("store", session.currentStore?.shortName.orEmpty())
+                .put("store", session.viewingStore?.shortName.orEmpty())
                 .put("note", "这是桌码，不是付款码，不能当成核销成功")
                 .put("vision_route", outcome.reason)
                 .put("vision_source", source)
@@ -926,17 +924,17 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 .toString()
         }
         val synthetic = when (outcome.barcodeType) {
-            "weixin" -> "weixin://wxpay/bizpayurl?store=${outcome.merchantHint.ifBlank { session.currentStore?.id.orEmpty() }}"
-            "alipay" -> "https://qr.alipay.com/${outcome.merchantHint.ifBlank { session.currentStore?.id.orEmpty() }}"
-            else -> "mtpay://${outcome.merchantHint.ifBlank { session.currentStore?.id.orEmpty() }}"
+            "weixin" -> "weixin://wxpay/bizpayurl?store=${outcome.merchantHint.ifBlank { session.viewingStore?.id.orEmpty() }}"
+            "alipay" -> "https://qr.alipay.com/${outcome.merchantHint.ifBlank { session.viewingStore?.id.orEmpty() }}"
+            else -> "mtpay://${outcome.merchantHint.ifBlank { session.viewingStore?.id.orEmpty() }}"
         }
         val order = MockCommerce.payFromQr(
             payload = synthetic,
-            fallback = session.currentStore,
+            fallback = session.viewingStore,
             stores = session.catalog.stores(),
         )?.copy(qrType = outcome.barcodeType ?: "pay")
             ?: return JSONObject().put("ok", false).put("error", "付款码无法对应门店").toString()
-        if (session.currentStore == null && order.merchantId.isNotBlank()) {
+        if (session.viewingStore == null && order.merchantId.isNotBlank()) {
             session.look(forceStoreId = order.merchantId)
         }
         session.preparePay(order)
@@ -976,10 +974,10 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 .put("vision_source", source)
                 .toString()
         }
-        if (session.currentStore == null && outcome.merchantHint.isNotBlank()) {
+        if (session.viewingStore == null && outcome.merchantHint.isNotBlank()) {
             session.look(forceStoreId = outcome.merchantHint)
         }
-        if (session.currentStore == null) {
+        if (session.viewingStore == null) {
             return JSONObject()
                 .put("ok", false)
                 .put("error", "还没确认要服务的门店，先认店再扫券")
@@ -1004,7 +1002,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         if (picked == null) {
-            val card = HudCard.fromCoupons(session.currentStore?.shortName.orEmpty(), session.lastCoupons)
+            val card = HudCard.fromCoupons(session.viewingStore?.shortName.orEmpty(), session.lastCoupons)
             publishSkillCard(card, card.wait.ifBlank { "请选定一张券" }, "scan_coupon")
             return JSONObject()
                 .put("ok", true)
@@ -1019,7 +1017,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 .toString()
         }
         session.prepareCoupon(picked.id)
-        val card = HudCard.fromCoupons(session.currentStore?.shortName.orEmpty(), listOf(picked))
+        val card = HudCard.fromCoupons(session.viewingStore?.shortName.orEmpty(), listOf(picked))
         publishSkillCard(card, "确认后才核销${picked.title}", "scan_coupon")
         return JSONObject()
             .put("ok", true)
@@ -1028,7 +1026,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             .put("coupon_id", picked.id)
             .put("title", picked.title)
             .put("price", picked.price)
-            .put("store", session.currentStore?.shortName)
+            .put("store", session.viewingStore?.shortName)
             .put("message", "看到${picked.title}，确认后才核销")
             .put("note", "扫码不等于核销成功")
             .put("vision_route", outcome.reason)
@@ -1054,7 +1052,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                     navigating = session.navigating,
                     status = status,
                     recognizing = false,
-                    match = session.lastMatch,
+                    match = session.viewing ?: session.lastMatch,
                     lastQa = QaResult(status, intent, status, status),
                 )
             }
@@ -1071,10 +1069,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                     storeCaption = caption,
                     navigating = false,
                     status = status,
-                    recognizing = false,
-                    match = session.lastMatch,
-                    lastQa = QaResult(status, intent, status, status),
-                    navHint = null,
+                    match = session.viewing ?: session.lastMatch,
                 )
             }
             CxrLinkHost.showStore(place, caption)
@@ -1112,7 +1107,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun currentMatch(): MatchResult? {
-        return _ui.value.match ?: session.lastMatch
+        return _ui.value.match ?: session.viewing ?: session.lastMatch
     }
 
     private fun failCard(line: String): HudCard {
@@ -1195,12 +1190,12 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     private fun currentHud(): HudCard {
         return navCard()
             ?: session.pendingPay?.let { HudCard.fromPayConfirm(it.storeName, it.amount, it.qrType) }
-            ?: session.pendingCoupon?.let { HudCard.fromCoupons(session.currentStore?.shortName.orEmpty(), listOf(it)) }
+            ?: session.pendingCoupon?.let { HudCard.fromCoupons(session.viewingStore?.shortName.orEmpty(), listOf(it)) }
             ?: session.lastCoupons.takeIf { it.isNotEmpty() }?.let {
-                HudCard.fromCoupons(session.currentStore?.shortName.orEmpty(), it)
+                HudCard.fromCoupons(session.viewingStore?.shortName.orEmpty(), it)
             }
             ?: session.lastMenu.takeIf { it.isNotEmpty() }?.let {
-                HudCard.fromMenu(session.currentStore?.shortName.orEmpty(), it)
+                HudCard.fromMenu(session.viewingStore?.shortName.orEmpty(), it)
             }
             ?: currentMatch()?.let { HudCard.fromMatch(it) }
             ?: HudCard.idle()
@@ -1411,15 +1406,19 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun worldContext(): WorldContext {
-        val store = session.currentStore
+        val boundStore = session.currentStore
+        val viewingStore = session.viewingStore
         val gps = PhoneGps.last
         val env = EnvironmentStore.snapshot()
-        val bound = store?.let { PlaceResolver.fromStore(it) }
+        val bound = boundStore?.let { PlaceResolver.fromStore(it) }
+        val viewing = viewingStore?.let { PlaceResolver.fromStore(it) }
         val disambiguation = session.candidates.map { PlaceResolver.fromStore(it).ref }
         val search = cachedPlaces.filter { place -> disambiguation.none { it.id == place.id } }
         return WorldContext(
             boundPlace = bound?.ref,
             boundProfile = bound,
+            viewingPlace = viewing?.ref,
+            viewingProfile = viewing,
             disambiguation = disambiguation,
             recentSearch = search,
             observation = latestObservation,

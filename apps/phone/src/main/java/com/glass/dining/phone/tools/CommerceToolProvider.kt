@@ -14,18 +14,18 @@ class CommerceToolProvider(private val world: PhoneWorld) {
     }
 
     private fun listCoupons(): String {
-        if (world.session.currentStore == null) {
+        if (world.session.viewingStore == null) {
             return JSONObject().put("ok", false).put("error", "还没确认要服务的门店，先认店或推荐").toString()
         }
-        if (!world.session.currentStore!!.catalogBacked) {
+        if (!world.session.viewingStore!!.catalogBacked) {
             return JSONObject().put("ok", false).put("error", "公开地点没有券数据").toString()
         }
         val coupons = world.session.listCoupons()
-        val card = HudCard.fromCoupons(world.session.currentStore?.shortName.orEmpty(), coupons)
+        val card = HudCard.fromCoupons(world.session.viewingStore?.shortName.orEmpty(), coupons)
         world.publishSkillCard(card, card.wait.ifBlank { "这店暂无券" }, "list_coupons")
         return JSONObject()
             .put("ok", true)
-            .put("store", world.session.currentStore?.shortName)
+            .put("store", world.session.viewingStore?.shortName)
             .put("mock", true)
             .put("coupons", coupons.joinToString("；") { "${it.id}:${it.title}¥${it.price}" })
             .put("need_confirm", true)
@@ -34,7 +34,7 @@ class CommerceToolProvider(private val world: PhoneWorld) {
     }
 
     private fun redeem(args: JSONObject): String {
-        if (world.session.currentStore == null) {
+        if (world.session.viewingStore == null) {
             return JSONObject().put("ok", false).put("error", "还没确认要服务的门店").toString()
         }
         if (world.session.lastCoupons.isEmpty()) {
@@ -55,7 +55,7 @@ class CommerceToolProvider(private val world: PhoneWorld) {
             return JSONObject().put("ok", false).put("error", "这店没有可核销的券").toString()
         }
         if (!args.optBoolean("confirm", false)) {
-            val card = HudCard.fromCoupons(world.session.currentStore?.shortName.orEmpty(), listOf(picked))
+            val card = HudCard.fromCoupons(world.session.viewingStore?.shortName.orEmpty(), listOf(picked))
             world.publishSkillCard(card, "确认后才核销${picked.title}", "redeem_coupon")
             return JSONObject()
                 .put("ok", true)

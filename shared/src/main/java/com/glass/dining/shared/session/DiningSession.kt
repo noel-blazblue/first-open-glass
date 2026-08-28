@@ -21,6 +21,8 @@ class DiningSession(
 
     @Volatile var catalog: StoreCatalog = catalog
         private set
+    var viewing: MatchResult? = null
+        private set
     var lastMatch: MatchResult? = null
         private set
     var navigating: Boolean = false
@@ -38,8 +40,10 @@ class DiningSession(
 
     val currentStore: Store?
         get() = lastMatch?.store
+    val viewingStore: Store?
+        get() = viewing?.store ?: lastMatch?.store
     val candidates: List<Store>
-        get() = lastMatch?.candidates.orEmpty()
+        get() = viewing?.candidates?.takeIf { it.isNotEmpty() } ?: lastMatch?.candidates.orEmpty()
     val hasPendingConfirm: Boolean
         get() = pendingPay != null || pendingCoupon != null
     val surfaceLocked: Boolean
@@ -49,7 +53,7 @@ class DiningSession(
         return when {
             navigating -> HudSurface.NAV
             hasPendingConfirm -> HudSurface.CONFIRM
-            lastMatch != null -> HudSurface.STORE
+            viewing != null || lastMatch != null -> HudSurface.STORE
             else -> HudSurface.TALK
         }
     }
@@ -57,22 +61,16 @@ class DiningSession(
     fun replaceCatalog(next: StoreCatalog) {
         catalog = next
         matcher = DiningMatcher(next)
-        val currentId = lastMatch?.store?.id
-        if (currentId != null) {
-            val refreshed = matcher.select(currentId)
-            if (refreshed != null) {
-                lastMatch = lastMatch?.copy(
-                    store = refreshed.store,
-                    candidates = refreshed.candidates,
-                ) ?: refreshed
-            }
-        }
+        lastMatch = refresh(lastMatch)
+        viewing = refresh(viewing)
+    }
+
+    fun viewPlace(place: PlaceProfile): MatchResult {
+        return show(PlaceResolver.matchResult(place))
     }
 
     fun bindPlace(place: PlaceProfile): MatchResult {
-        val result = PlaceResolver.matchResult(place)
-        lastMatch = result
-        return result
+        return bind(PlaceResolver.matchResult(place))
     }
 
     fun look(
@@ -87,41 +85,46 @@ class DiningSession(
                 visionHint = visionHint,
             ),
         ) ?: return null
-        lastMatch = result
-        return result
+        return show(result)
     }
 
     fun clearLook() {
         lastMatch = null
+        viewing = null
     }
 
     fun next(): MatchResult? {
-        val result = matcher.next(lastMatch?.store?.id) ?: return null
-        lastMatch = result
-        return result
+        val result = matcher.next(viewingStore?.id) ?: return null
+        return show(result)
     }
 
     fun select(storeId: String): MatchResult? {
         val result = matcher.select(storeId) ?: return null
-        lastMatch = result
-        return result
+        return bind(result)
     }
 
     fun recommend(query: String): MatchResult? {
         val result = matcher.recommend(query) ?: return null
-        lastMatch = result
-        return result
+        return show(result)
+    }
+
+    fun commitViewing(): MatchResult? {
+        val shown = viewing ?: return lastMatch
+        if (lastMatch?.store?.id != shown.store.id) {
+            lastMatch = shown
+        }
+        return lastMatch
     }
 
     fun updateStore(store: Store) {
-        val current = lastMatch ?: return
-        lastMatch = current.copy(
-            store = store,
-            candidates = current.candidates.map { if (it.id == store.id) store else it },
-        )
+        lastMatch = overlay(lastMatch, store)
+        viewing = overlay(viewing, store)
     }
 
     fun startNav(): Boolean {
+        if (lastMatch?.store == null) {
+            lastMatch = viewing ?: return false
+        }
         if (lastMatch?.store == null) return false
         clearTransient()
         navigating = true
@@ -132,20 +135,20 @@ class DiningSession(
         navigating = false
     }
 
-    fun startMenu(items: List<MenuItem> = MockCommerce.menuOf(currentStore)): List<MenuItem> {
+    fun startMenu(items: List<MenuItem> = MockCommerce.menuOf(viewingStore)): List<MenuItem> {
         lastMenu = items
         return items
     }
 
     fun listCoupons(): List<Coupon> {
-        lastCoupons = MockCommerce.couponsOf(currentStore)
+        lastCoupons = MockCommerce.couponsOf(viewingStore)
         pendingCoupon = null
         return lastCoupons
     }
 
     fun prepareCoupon(couponId: String): Coupon? {
         val coupon = lastCoupons.firstOrNull { it.id == couponId }
-            ?: MockCommerce.couponsOf(currentStore).firstOrNull { it.id == couponId }
+            ?: MockCommerce.couponsOf(viewingStore).firstOrNull { it.id == couponId }
             ?: lastCoupons.firstOrNull()
         pendingCoupon = coupon
         return coupon
@@ -209,6 +212,31 @@ class DiningSession(
             clearTransient()
         }
         return surface
+    }
+
+    private fun show(result: MatchResult): MatchResult {
+        viewing = result
+        return result
+    }
+
+    private fun bind(result: MatchResult): MatchResult {
+        lastMatch = result
+        viewing = result
+        return result
+    }
+
+    private fun refresh(match: MatchResult?): MatchResult? {
+        val id = match?.store?.id ?: return match
+        val refreshed = matcher.select(id) ?: return match
+        return match.copy(store = refreshed.store, candidates = refreshed.candidates)
+    }
+
+    private fun overlay(match: MatchResult?, store: Store): MatchResult? {
+        val current = match ?: return null
+        return current.copy(
+            store = if (current.store.id == store.id) store else current.store,
+            candidates = current.candidates.map { if (it.id == store.id) store else it },
+        )
     }
 
     private fun clearTransient() {

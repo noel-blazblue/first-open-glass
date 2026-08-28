@@ -78,12 +78,12 @@ class VisionToolProvider(private val world: PhoneWorld) {
         if (promote.accept && catalog != null) {
             val result = world.session.look(forceStoreId = catalog.id, visionHint = seen)
             if (result != null) {
-                world.selectedThisTurn = true
                 world.rememberVisionStore(result.store.id)
                 world.publishMatch(result, "视觉认店")
                 return DiningToolProvider.facts(result)
                     .put("matched", true)
                     .put("is_store_fact", true)
+                    .put("bound", false)
                     .toString()
             }
         }

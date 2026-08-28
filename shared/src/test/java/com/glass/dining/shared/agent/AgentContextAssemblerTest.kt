@@ -33,6 +33,20 @@ class AgentContextAssemblerTest {
     }
 
     @Test
+    fun viewingWithoutBindIsNotBusinessObject() {
+        val text = AgentContextAssembler.format(
+            WorldContext(
+                viewingPlace = place("西红柿韩国料理"),
+                viewingProfile = place("西红柿韩国料理").asProfile(rating = 4.5, avgCost = 80),
+            ),
+        )
+        assertTrue(text.contains("【正在查看】西红柿韩国料理"))
+        assertTrue(text.contains("不是导航目的地"))
+        assertFalse(text.contains("【业务对象】"))
+        assertTrue(text.contains("【门店资料】"))
+    }
+
+    @Test
     fun browsingStoreIsViewingNotLocation() {
         val text = AgentContextAssembler.format(
             WorldContext(boundPlace = place("海底捞火锅")),

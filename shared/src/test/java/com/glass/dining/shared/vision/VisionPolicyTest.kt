@@ -296,9 +296,11 @@ class VisionPolicyTest {
     fun clearLookDropsCurrentStore() {
         val session = DiningSession(catalog)
         session.look(forceStoreId = "store_hotpot")
-        assertNotNull(session.currentStore)
+        assertNotNull(session.viewingStore)
+        assertEquals(null, session.currentStore)
         session.clearLook()
-        assertNull(session.currentStore)
+        assertEquals(null, session.viewingStore)
+        assertEquals(null, session.currentStore)
         assertFalse(session.navigating)
     }
 

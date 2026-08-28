@@ -12,6 +12,7 @@ object AgentContextAssembler {
             recentLine(env)?.let(::add)
             activityLine(env)?.let(::add)
             eventsLine(env)?.let(::add)
+            viewingLine(world)?.let(::add)
             boundLine(world)?.let(::add)
             if (world.disambiguation.isNotEmpty()) {
                 add("【待选择地点】" + world.disambiguation.joinToString("、") { it.name })
@@ -112,6 +113,14 @@ object AgentContextAssembler {
         val events = env?.recentEvents.orEmpty()
         if (events.isEmpty()) return null
         return "【近期事件】" + events.take(3).joinToString("；") { it.summary }
+    }
+
+    private fun viewingLine(world: WorldContext): String? {
+        val place = world.viewingProfile ?: return null
+        if (world.boundPlace?.id == place.id) return null
+        val facts = PlaceFacts.contextFacts(place)
+        val head = "【正在查看】${place.name}（不是导航目的地，没有选定前不要出发）"
+        return if (facts.isBlank()) head else "$head\n【门店资料】$facts"
     }
 
     private fun boundLine(world: WorldContext): String? {

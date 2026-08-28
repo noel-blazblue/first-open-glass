@@ -81,7 +81,7 @@ private fun IdleHud(state: HudUiState) {
             Spacer(Modifier.height(12.dp))
             Text(
                 text = if (state.recognizing) {
-                    "正在拍照识别店招…"
+                    "正在查看…"
                 } else if (state.listening) {
                     "正在听，请说话"
                 } else {

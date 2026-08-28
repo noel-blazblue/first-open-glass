@@ -17,7 +17,7 @@ class ReimuHudTest {
     @Test
     fun inferPoseFromSpeechWhenFieldMissing() {
         assertEquals(TalkPose.THINK, TalkPose.of("", "思考中"))
-        assertEquals(TalkPose.LOOK, TalkPose.of("", "正在拍照"))
+        assertEquals(TalkPose.LOOK, TalkPose.of("", "正在查看"))
         assertEquals(TalkPose.LISTEN, TalkPose.of("", "Hi, 我在听"))
         assertEquals(TalkPose.SPEAK, TalkPose.of("", "右转五十米"))
         assertEquals(TalkPose.THINK, TalkPose.of("think", "Hi, 我在听"))
