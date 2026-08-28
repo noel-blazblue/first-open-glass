@@ -10,6 +10,7 @@ import com.glass.dining.shared.agent.AgentMemory
 import com.glass.dining.shared.agent.AgentPrompts
 import com.glass.dining.shared.agent.DegradedPlanner
 import com.glass.dining.shared.agent.LlmMessage
+import com.glass.dining.shared.agent.LlmMessageSanitizer
 import com.glass.dining.shared.agent.WorldContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -32,14 +33,15 @@ object PhoneAgent {
         if (text.isBlank()) {
             return AiReply("我没听清，再说一次。", "再说一次", false)
         }
-        val messages = buildMessages(text, world)
+        val prior = history.toList()
+        val messages = buildMessages(text, world, prior)
         val tools = registry.toJsonArray()
         val outcome = loop.run(
             messages = messages,
             userText = text,
             requestModel = { current, onStream ->
                 if (PhoneAi.ready) {
-                    PhoneAi.streamTurn(toJson(current), tools, onStream, cancel)
+                    PhoneAi.streamTurn(toJson(LlmMessageSanitizer.sanitize(current)), tools, onStream, cancel)
                 } else {
                     DegradedPlanner.turn(current, world.copy(modelReady = false))
                 }
@@ -62,27 +64,20 @@ object PhoneAgent {
             speak = if (PhoneAi.ready) "我这次没回上，再说一次。" else "语言模型还没配好。我仍能看眼前、搜附近、带路。"
         }
         if (!outcome.failed && !outcome.cancelled) {
-            persist(messages, text, speak)
+            persist(prior, text, messages, speak)
         }
         return AiReply(speak.ifBlank { "我没听清，再说一次。" }, speak.take(16), PhoneAi.ready && speak.isNotBlank())
     }
 
-    private fun buildMessages(question: String, world: WorldContext): MutableList<LlmMessage> {
+    private fun buildMessages(question: String, world: WorldContext, prior: List<LlmMessage>): MutableList<LlmMessage> {
         val system = LlmMessage("system", AgentPrompts.BASE + "\n" + AgentContextAssembler.format(world))
-        val compact = AgentMemory.compact(history.toList())
-        return (listOf(system) + compact + LlmMessage("user", question)).toMutableList()
+        return (listOf(system) + AgentMemory.prepare(prior) + LlmMessage("user", question)).toMutableList()
     }
 
-    private fun persist(messages: List<LlmMessage>, userText: String, speak: String) {
-        val turn = messages.filter { it.role != "system" }
-        history.add(LlmMessage("user", userText))
-        turn.filter { it.role == "assistant" || it.role == "tool" }.forEach { history.add(it) }
-        if (speak.isNotBlank() && history.none { it.role == "assistant" && it.content == speak }) {
-            history.add(LlmMessage("assistant", speak))
-        }
-        val compacted = AgentMemory.compact(history.toList())
+    private fun persist(prior: List<LlmMessage>, userText: String, loopMessages: List<LlmMessage>, speak: String) {
+        val next = AgentMemory.commit(prior, userText, loopMessages, speak)
         history.clear()
-        history.addAll(compacted)
+        history.addAll(next)
     }
 
     private fun toJson(messages: List<LlmMessage>): JSONArray {

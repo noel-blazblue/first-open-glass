@@ -1,42 +1,140 @@
 package com.glass.dining.shared.agent
 
+internal data class ConversationTurn(
+    val user: LlmMessage,
+    val followUp: List<LlmMessage>,
+) {
+    fun flatten(): List<LlmMessage> = listOf(user) + followUp
+}
+
 object AgentMemory {
-    fun compact(messages: List<LlmMessage>, maxMessages: Int = 20): List<LlmMessage> {
+    const val DEFAULT_MAX_TURNS = 8
+    const val DEFAULT_RECENT_TURNS = 2
+
+    fun prepare(history: List<LlmMessage>): List<LlmMessage> {
+        return LlmMessageSanitizer.sanitize(compact(history))
+    }
+
+    fun commit(
+        prior: List<LlmMessage>,
+        userText: String,
+        loopMessages: List<LlmMessage>,
+        speak: String,
+    ): List<LlmMessage> {
+        val turn = extractTurn(loopMessages, userText, speak)
+        return prepare(prior + turn)
+    }
+
+    fun compact(
+        messages: List<LlmMessage>,
+        maxTurns: Int = DEFAULT_MAX_TURNS,
+        recentTurns: Int = DEFAULT_RECENT_TURNS,
+    ): List<LlmMessage> {
         val system = messages.filter { it.role == "system" }
-        val rest = messages.filter { it.role != "system" }
-        if (rest.size <= maxMessages) return messages
-        val kept = rest.takeLast(maxMessages)
-        val dropped = rest.dropLast(kept.size)
-        val summary = summarize(dropped)
-        return system + LlmMessage("user", summary) + kept
+        val turns = groupTurns(messages)
+        if (turns.isEmpty()) return system
+        val overflow = (turns.size - maxTurns).coerceAtLeast(0)
+        val dropped = turns.take(overflow)
+        val kept = turns.drop(overflow)
+        val pruned = pruneOlder(kept, recentTurns.coerceAtLeast(1))
+        val summary = if (dropped.isEmpty()) emptyList() else {
+            listOf(LlmMessage("user", summarize(dropped.flatMap { it.flatten() })))
+        }
+        return system + summary + pruned.flatMap { it.flatten() }
     }
 
     fun summarize(dropped: List<LlmMessage>): String {
-        val goal = dropped.firstOrNull { it.role == "user" }?.content.orEmpty().take(40)
+        val goal = dropped.firstOrNull { it.role == "user" }?.content.orEmpty()
+            .removePrefix("【压缩摘要】").take(40)
         val facts = dropped.filter { it.role == "tool" }
             .mapNotNull { factFromTool(it.content) }
             .distinct()
             .take(6)
+        val replies = dropped.filter { it.role == "assistant" && it.toolCalls.isEmpty() }
+            .map { it.content.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(3)
         val pending = dropped.filter { it.role == "tool" && it.content.contains("need_confirm") }
-            .mapNotNull { ToolSpeak.field(it.content, "message") }
+            .mapNotNull { ToolSpeak.field(it.content, "message").takeIf { text -> text.isNotBlank() } }
             .filter { !ToolSpeak.isDeveloper(it) }
             .distinct()
             .take(3)
         return buildString {
             append("【压缩摘要】目标：").append(goal.ifBlank { "未记录" })
             append("。已确认事实：").append(if (facts.isEmpty()) "无" else facts.joinToString("；"))
+            if (replies.isNotEmpty()) {
+                append("。近期回复：").append(replies.joinToString("；") { it.take(40) })
+            }
             append("。待办：").append(if (pending.isEmpty()) "无" else pending.joinToString("；"))
         }
+    }
+
+    internal fun extractTurn(loopMessages: List<LlmMessage>, userText: String, speak: String): List<LlmMessage> {
+        val idx = loopMessages.indexOfLast { it.role == "user" && it.content == userText }
+        val rest = if (idx >= 0) loopMessages.drop(idx) else listOf(LlmMessage("user", userText))
+        val turn = rest.filter { it.role != "system" }
+        val hasSpeak = speak.isNotBlank() && turn.any { msg ->
+            msg.role == "assistant" && msg.toolCalls.isEmpty() && msg.content == speak
+        }
+        return if (speak.isNotBlank() && !hasSpeak) turn + LlmMessage("assistant", speak) else turn
+    }
+
+    internal fun groupTurns(messages: List<LlmMessage>): List<ConversationTurn> {
+        val turns = ArrayList<ConversationTurn>()
+        var user: LlmMessage? = null
+        var follow = ArrayList<LlmMessage>()
+        fun flush() {
+            val current = user ?: return
+            turns += ConversationTurn(current, follow.toList())
+            user = null
+            follow = ArrayList()
+        }
+        for (msg in messages) {
+            if (msg.role == "system") continue
+            if (msg.role == "user") {
+                flush()
+                user = msg
+            } else if (user != null) {
+                follow += msg
+            }
+        }
+        flush()
+        return turns
+    }
+
+    private fun pruneOlder(turns: List<ConversationTurn>, recentTurns: Int): List<ConversationTurn> {
+        if (turns.size <= recentTurns) return turns
+        val split = turns.size - recentTurns
+        return turns.mapIndexed { index, turn ->
+            if (index < split) turn.asSemanticPair() else turn
+        }
+    }
+
+    private fun ConversationTurn.asSemanticPair(): ConversationTurn {
+        val finalReply = followUp.lastOrNull { it.role == "assistant" && it.toolCalls.isEmpty() }
+            ?: followUp.lastOrNull { it.role == "assistant" }?.let { msg ->
+                LlmMessage("assistant", msg.content.ifBlank { "已处理。" })
+            }
+        return ConversationTurn(user, listOfNotNull(finalReply))
     }
 
     private fun factFromTool(content: String): String? {
         if (!content.contains("\"ok\":true")) return null
         if (content.contains("need_confirm") || content.contains("need_disambiguation")) return null
         if (content.contains("\"observation\":true") && !content.contains("\"matched\":true")) return null
-        val store = ToolSpeak.field(content, "shortName").ifBlank { ToolSpeak.field(content, "store") }
-        val place = ToolSpeak.field(content, "name")
-        return store.ifBlank { place }.ifBlank { null }
+        for (key in LABEL_KEYS) {
+            val value = ToolSpeak.field(content, key)
+            if (value.isNotBlank() && !looksLikeId(value)) return value
+        }
+        return null
     }
+
+    private fun looksLikeId(value: String): Boolean {
+        return value.matches(Regex("[A-Za-z0-9_-]{8,}")) && value.any { it.isDigit() } && !value.any { it in '\u4e00'..'\u9fff' }
+    }
+
+    private val LABEL_KEYS = listOf("summary", "label", "title", "name", "shortName")
 }
 
 object DegradedPlanner {
