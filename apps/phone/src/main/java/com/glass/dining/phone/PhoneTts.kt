@@ -1,39 +1,57 @@
 package com.glass.dining.phone
 
 import android.content.Context
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioTrack
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import com.glass.dining.shared.agent.SpeechPriority
+import com.glass.dining.shared.agent.TtsBackend
+import com.glass.dining.shared.agent.TtsPlayState
+import com.glass.dining.shared.agent.TtsRouter
+import com.glass.dining.shared.agent.TtsSession
 import java.util.Locale
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.math.max
 
 object PhoneTts {
     private const val TAG = "GlassDiningPhone"
     private val main = Handler(Looper.getMainLooper())
+    private val session = TtsSession()
 
     private var tts: TextToSpeech? = null
     @Volatile private var ready: Boolean = false
     @Volatile private var pending: String? = null
-    @Volatile var speaking: Boolean = false
-        private set
-    @Volatile var spokenText: String = ""
-        private set
-    var onIdle: (() -> Unit)? = null
+    @Volatile private var streamingDenied: Boolean = false
+    @Volatile private var androidText: String = ""
+    private var androidSeq: Int = 0
     @Volatile private var activeId: String = ""
-    private var seq: Int = 0
+    @Volatile private var streaming: NlsStreamingTtsClient? = null
+    @Volatile private var backend: TtsBackend = TtsBackend.NONE
+    @Volatile private var restCovered: Int = 0
 
-    private val cloudQueue = LinkedBlockingQueue<String>(16)
-    private val cloudRunning = AtomicBoolean(false)
-    @Volatile private var cloudPlayback: AudioTrack? = null
-    @Volatile private var cloudPlaySeq: Int = 0
+    val speaking: Boolean get() = session.speaking
+    val audible: Boolean get() = session.audible
+    val spokenText: String get() = session.queuedText
+    val echoWindow: String get() = session.echoWindow
+    val audibleText: String get() = session.audibleText
+    val lookahead: String get() = session.lookahead
+    val state: TtsPlayState get() = session.state
+    val generation: Int get() = session.generation
+
+    var onIdle: (() -> Unit)? = null
+    var onProgress: ((String) -> Unit)? = null
+    var onAudible: (() -> Unit)? = null
+
+    private val rest = RestTtsPlayer(
+        currentGen = { session.generation },
+        onAudible = { gen, text -> markAudible(gen, text) },
+        onProgress = { gen, text -> markProgress(gen, text) },
+        onFinished = { gen -> finishIfCurrent(gen) },
+        onFailed = { gen, message ->
+            Log.w(TAG, "nls rest tts fail gen=$gen ${message.take(80)}")
+            finishIfCurrent(gen)
+        },
+    )
 
     fun init(context: Context) {
         if (NlsClient.ready) {
@@ -49,21 +67,7 @@ object PhoneTts {
                 if (zh == TextToSpeech.LANG_MISSING_DATA || zh == TextToSpeech.LANG_NOT_SUPPORTED) {
                     engine?.setLanguage(Locale.CHINESE)
                 }
-                engine?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) {
-                        if (utteranceId != activeId) return
-                        speaking = true
-                    }
-
-                    override fun onDone(utteranceId: String?) {
-                        finishIfCurrent(utteranceId)
-                    }
-
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(utteranceId: String?) {
-                        finishIfCurrent(utteranceId)
-                    }
-                })
+                engine?.setOnUtteranceProgressListener(androidListener())
                 Log.i(TAG, "phone TTS ready nls=${NlsClient.ready}")
                 pending?.let { speak(it) }
                 pending = null
@@ -73,176 +77,189 @@ object PhoneTts {
         }
     }
 
-    fun speak(text: String) {
-        enqueue(text, flush = true)
+    fun speak(text: String, priority: SpeechPriority = SpeechPriority.AGENT) {
+        enqueue(text, flush = true, priority = priority)
     }
 
-    fun speakMore(text: String) {
-        enqueue(text, flush = false)
+    fun speakMore(text: String, priority: SpeechPriority = SpeechPriority.AGENT) {
+        enqueue(text, flush = false, priority = priority)
     }
 
-    private fun enqueue(text: String, flush: Boolean) {
+    fun finishInput() {
+        streaming?.finishInput()
+    }
+
+    fun stop() {
+        val wasSpeaking = session.speaking
+        session.bump()
+        clearBackends()
+        activeId = ""
+        tts?.stop()
+        if (wasSpeaking) main.post { onIdle?.invoke() }
+    }
+
+    fun shutdown() {
+        stop()
+        tts?.shutdown()
+        tts = null
+        ready = false
+    }
+
+    private fun enqueue(text: String, flush: Boolean, priority: SpeechPriority) {
         val spoken = text.trim()
         if (spoken.isBlank()) return
-        spokenText = if (flush) spoken else spokenText + spoken
-        if (NlsClient.ready) {
-            enqueueCloud(spoken, flush)
-            return
+        val gen = session.begin(priority, flush) ?: return
+        if (flush) {
+            clearBackends()
+            tts?.stop()
         }
-        enqueueAndroid(spoken, flush)
+        session.appendQueued(spoken)
+        GlassAsr.holdForTts()
+        Log.i(TAG, "voice ttsSession=$gen phase=enqueue chars=${spoken.length} flush=$flush pri=${priority.name}")
+        when (TtsRouter.choose(NlsClient.ready, streamingDenied, backend)) {
+            TtsBackend.WS -> enqueueNls(spoken, gen)
+            TtsBackend.REST -> enqueueRest(gen)
+            TtsBackend.ANDROID -> enqueueAndroid(spoken, flush)
+            TtsBackend.NONE -> enqueueAndroid(spoken, flush)
+        }
     }
 
-    private fun enqueueCloud(text: String, flush: Boolean) {
-        if (flush) {
-            cloudQueue.clear()
-            stopCloudPlayback()
+    private fun enqueueNls(text: String, gen: Int) {
+        val client = synchronized(this) {
+            if (backend == TtsBackend.REST) {
+                enqueueRest(gen)
+                return
+            }
+            backend = TtsBackend.WS
+            streaming ?: NlsStreamingTtsClient(
+                generation = gen,
+                currentGen = { session.generation },
+                onAudible = { g, heard -> markAudible(g, heard) },
+                onProgress = { g, heard -> markProgress(g, heard) },
+                onFinished = { g -> finishIfCurrent(g) },
+                onFailed = { g, message, heard -> onStreamFailed(g, message, heard) },
+            ).also { created ->
+                streaming = created
+                Thread({ bootStreaming(created, gen) }, "nls-tts-ws").start()
+            }
         }
-        if (!cloudQueue.offer(text)) {
-            cloudQueue.poll()
-            cloudQueue.offer(text)
+        client.sendText(text)
+    }
+
+    private fun enqueueRest(gen: Int) {
+        backend = TtsBackend.REST
+        val queued = session.queuedText
+        val (extra, covered) = TtsRouter.restSlice(queued, restCovered)
+        restCovered = covered
+        if (extra.isNotBlank()) rest.enqueue(extra, gen)
+    }
+
+    private fun bootStreaming(client: NlsStreamingTtsClient, gen: Int) {
+        val error = client.start()
+        if (gen != session.generation) {
+            client.stop()
+            return
         }
-        speaking = true
-        GlassAsr.holdForTts()
-        startCloudWorker()
+        if (error != null) {
+            Log.w(TAG, "nls tts ws fallback rest: $error")
+            fallbackRest(gen, error, client.audibleText())
+        }
+    }
+
+    private fun onStreamFailed(gen: Int, message: String, heard: String) {
+        if (gen != session.generation) return
+        Log.w(TAG, "nls tts ws fail gen=$gen ${message.take(80)}")
+        fallbackRest(gen, message, heard)
+    }
+
+    private fun fallbackRest(gen: Int, message: String, heard: String) {
+        synchronized(this) {
+            if (gen != session.generation) return
+            if (TtsRouter.stickyDeny(message)) streamingDenied = true
+            if (backend == TtsBackend.REST) return
+            val leftover = TtsRouter.leftover(session.queuedText, session.audibleText, heard)
+            backend = TtsBackend.REST
+            val client = streaming
+            streaming = null
+            client?.stop()
+            restCovered = session.queuedText.length
+            if (leftover.isNotBlank()) rest.enqueue(leftover, gen)
+            else finishIfCurrent(gen)
+        }
+    }
+
+    private fun clearBackends() {
+        synchronized(this) {
+            streaming?.stop()
+            streaming = null
+            rest.stop()
+            backend = TtsBackend.NONE
+            restCovered = 0
+        }
     }
 
     private fun enqueueAndroid(text: String, flush: Boolean) {
+        backend = TtsBackend.ANDROID
         val engine = tts
         if (!ready || engine == null) {
             pending = text
             return
         }
-        seq += 1
-        val id = "dining-ai-$seq"
+        androidSeq += 1
+        val id = "dining-ai-$androidSeq"
         activeId = id
-        speaking = true
-        GlassAsr.holdForTts()
+        androidText = text
         val mode = if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
         engine.speak(text, mode, null, id)
     }
 
-    private fun startCloudWorker() {
-        if (!cloudRunning.compareAndSet(false, true)) return
-        Thread({
-            try {
-                while (true) {
-                    val chunk = cloudQueue.poll(80, TimeUnit.MILLISECONDS)
-                    if (chunk == null) {
-                        if (cloudQueue.isEmpty()) break
-                        continue
-                    }
-                    speaking = true
-                    GlassAsr.holdForTts()
-                    val pcm = NlsClient.synthesize(chunk)
-                    if (pcm == null) {
-                        Log.w(TAG, "nls tts empty, skip audio")
-                        continue
-                    }
-                    playPcm(pcm)
-                }
-            } finally {
-                cloudRunning.set(false)
-                if (cloudQueue.isEmpty()) {
-                    speaking = false
-                    main.post { onIdle?.invoke() }
-                } else {
-                    startCloudWorker()
-                }
+    private fun androidListener(): UtteranceProgressListener {
+        return object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {
+                if (utteranceId != activeId) return
+                markAudible(session.generation, "")
             }
-        }, "nls-tts").start()
-    }
 
-    private fun playPcm(pcm: ByteArray) {
-        if (pcm.isEmpty()) return
-        val rate = NlsClient.sampleRate
-        val minBuf = AudioTrack.getMinBufferSize(
-            rate,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-        )
-        val seq = cloudPlaySeq
-        val track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build(),
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setSampleRate(rate)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .build(),
-            )
-            .setBufferSizeInBytes(max(minBuf, 4096))
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .build()
-        cloudPlayback = track
-        try {
-            track.play()
-            var offset = 0
-            while (offset < pcm.size && seq == cloudPlaySeq) {
-                val written = track.write(pcm, offset, pcm.size - offset)
-                if (written <= 0) break
-                offset += written
+            override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
+                if (utteranceId != activeId) return
+                markProgress(session.generation, androidText.take(end.coerceAtLeast(0)))
             }
-            val frames = pcm.size / 2
-            while (seq == cloudPlaySeq && track.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                if (track.playbackHeadPosition >= frames) break
-                Thread.sleep(20)
+
+            override fun onDone(utteranceId: String?) {
+                if (utteranceId != activeId) return
+                finishIfCurrent(session.generation)
             }
-        } catch (error: Exception) {
-            Log.w(TAG, "nls tts play failed", error)
-        } finally {
-            if (cloudPlayback === track) {
-                cloudPlayback = null
-            }
-            try {
-                track.pause()
-                track.flush()
-                track.stop()
-                track.release()
-            } catch (_: Exception) {
+
+            @Deprecated("Deprecated in Java")
+            override fun onError(utteranceId: String?) {
+                if (utteranceId != activeId) return
+                finishIfCurrent(session.generation)
             }
         }
     }
 
-    private fun stopCloudPlayback() {
-        cloudPlaySeq += 1
-        val track = cloudPlayback
-        cloudPlayback = null
-        if (track == null) return
-        try {
-            track.pause()
-            track.flush()
-            track.stop()
-        } catch (_: Exception) {
+    private fun markAudible(gen: Int, text: String) {
+        if (gen != session.generation) return
+        val first = session.state == TtsPlayState.SYNTHESIZING
+        session.markAudible(gen, text.ifBlank { session.audibleText })
+        if (first) {
+            Log.i(TAG, "voice ttsSession=$gen phase=audible chars=${session.audibleText.length}")
+            main.post { onAudible?.invoke() }
         }
     }
 
-    private fun finishIfCurrent(utteranceId: String?) {
-        if (utteranceId != activeId) return
-        speaking = false
-        onIdle?.invoke()
+    private fun markProgress(gen: Int, text: String) {
+        if (gen != session.generation) return
+        session.markAudible(gen, text)
+        main.post { onProgress?.invoke(text) }
     }
 
-    fun stop() {
-        activeId = ""
-        cloudQueue.clear()
-        stopCloudPlayback()
-        tts?.stop()
-        speaking = false
-    }
-
-    fun shutdown() {
-        activeId = ""
-        cloudQueue.clear()
-        stopCloudPlayback()
-        tts?.stop()
-        tts?.shutdown()
-        tts = null
-        ready = false
-        speaking = false
+    private fun finishIfCurrent(gen: Int) {
+        if (gen != session.generation) return
+        if (session.state == TtsPlayState.IDLE) return
+        session.markDraining(gen)
+        session.markIdle(gen)
+        Log.i(TAG, "voice ttsSession=$gen phase=idle")
+        main.post { onIdle?.invoke() }
     }
 }

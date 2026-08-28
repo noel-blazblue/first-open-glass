@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -98,14 +100,14 @@ private fun TalkPreview(card: HudCard, modifier: Modifier = Modifier) {
         lines.forEach { line ->
             PreviewLine(line, 18, FontWeight.Normal)
         }
+        Spacer(Modifier.height(TalkLayout.PREVIEW_GAP_DP.dp))
         Image(
             painter = painterResource(ReimuHud.resId(pose)),
             contentDescription = null,
             contentScale = ContentScale.Fit,
             modifier = Modifier
-                .padding(top = 4.dp)
-                .size(width = 92.dp, height = 124.dp)
-                .graphicsLayer { translationY = sin(tSec * 2.4f) * 3f },
+                .size(width = TalkLayout.PREVIEW_CHAR_WIDTH_DP.dp, height = TalkLayout.PREVIEW_CHAR_HEIGHT_DP.dp)
+                .graphicsLayer { translationY = sin(tSec * 2.4f) * TalkLayout.BOB_PX },
         )
     }
 }

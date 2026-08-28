@@ -1,3 +1,43 @@
+## 2026-08-28 — 听写定稿要先完整上屏，再切思考
+
+- 场景：说话最后一个字还没看见，镜片已经变成思考或 AI 回复。
+- 误判：ASR 丢字；或字幕折行把末字裁掉。
+- 根因：NLS 末字常只出现在 SentenceEnd。`onEndpoint` 立刻换成「思考中」，同一帧 `ask` 又盖掉完整句。
+- 以后先做：`HeardAskGate` 先 `listening(全文)` 停 500ms 再思考。log 看 `nls sentence=` 后 HUD 应先是听写全文，不应马上 `思考中`。
+- 不要做：endpoint 和 utterance 同一帧清听写。
+
+## 2026-08-28 — 对话字幕要离开人物头顶
+
+- 场景：AI 回复贴着灵梦，字的下沿被挡住。
+- 误判：字号太大；或折行宽度不够。
+- 根因：480×640 上人物 38% 高、中心在 76%，字幕基线几乎叠进头顶，再加上 descent 和上下浮动。
+- 以后先做：`TalkLayout` 人物更小更靠下，基线预留 gap + bob + descent。预览和镜片用同一套。
+- 不要做：只加 Compose `padding(top=4.dp)` 当镜片间距。
+
+## 2026-08-28 — 工具前过渡句要接着播，不要熔断成没回上
+
+- 场景：问附近门店，模型先说「帮你看下」再调搜索，耳机却念「这次没回上」。
+- 误判：模型坏了；或搜索工具没配。
+- 根因：流式把 content+tool_calls 当协议错误整轮失败，工具没执行。语音状态机只按单步直答设计。
+- 以后先做：混流保留过渡句并执行工具。工具返回后 `finishStep` 再 `speakMore` 接结果，不 `flush` 掐掉上一句。Prompt 允许极短过渡，禁止结果回来前猜事实。log 看 `protocol mixed` 后应有 `tools batch` 和 `phase=tool-step`，不应马上 `没回上`。
+- 不要做：混流直接 `failed`；工具步把 TTS `stop` 再重开；把过渡句当最终答案。
+
+## 2026-08-28 — 流式结束不能把同一句再送进 TTS
+
+- 场景：模型只回了一句「你好！需要我帮你做点什么吗？」，耳机却连播两遍。
+- 误判：模型生成了两次；或只是 NLS 免费试用过期导致 REST 念两遍。
+- 根因：增量 `main.post` 后，结束回调把全文再喂给分段器；更短的迟到 partial 会清零重切。WS 失败转 REST 时若再开新 WS，或把已入队全文再 enqueue 一次，就会叠播。
+- 以后先做：delta 与 finish 同 Main 队列。结束只 flush 余量。迟到短增量丢弃。一轮 generation 只钉一个后端，降级 leftover 按已听边界切，后续片段用 covered 偏移去重。`finishInput` 可在握手前挂起。抢话只在 `AUDIBLE`。log 看 `phase=enqueue` 同句不应出现两套相同 chars。
+- 不要做：`done=true` 再 consume 一遍全文；缩短 partial 就 reset 重播；WS 失败后同轮再 `new WebSocket`。
+
+## 2026-08-28 — Agent 流式回复必须声音驱动字幕
+
+- 场景：问答时镜片立刻出全文，耳机里的 TTS 还在一段段 REST 合成；插话会被尚未发声的全文误判成回声。
+- 误判：WebRTC 音画不同步；或只要把 `onDelta` 接到 HUD 就算流式。
+- 根因：主路径 `PhoneAi.complete()` 整段结束才开口。HUD 走 `hud.card`，TTS 等完整 PCM。回声过滤用了队列里的全文。
+- 以后先做：每步模型走可取消 SSE；混合 content+tool_calls 当协议错误。字幕等 `AUDIBLE` 后按字级时间戳滚动。回声只比 `echoWindow`。NLS FlowingSpeechSynthesizer 失败回退 REST 有序预取。log 看 `voice turn=` / `phase=llm-ttft|enqueue|audible|idle`，不要打全文和密钥。
+- 不要做：完成后再把全文当 delta 甩一次；工具参数/reasoning 上屏或播报；合成中用未出声文本杀用户打断。
+
 ## 2026-08-28 — 环境已捕捉门口，不等于导航会立刻画箭头
 
 - 场景：log 已有 `topology kind=ENTRANCE` 和 `space=entrance`，镜片仍无出口箭头。

@@ -190,7 +190,7 @@ class VisionLinkCoordinator(
             main.post {
                 PhoneP2p.start(app, attemptId) { offer ->
                     if (offer == null) {
-                        apply(machine.failNow("手机 20s 没建起 Direct 组"))
+                        apply(machine.failNow(PhoneP2p.lastError.ifBlank { "手机没建起 Direct 组" }))
                     } else {
                         apply(machine.onGroupReady(offer.copy(attemptId = attemptId)))
                     }

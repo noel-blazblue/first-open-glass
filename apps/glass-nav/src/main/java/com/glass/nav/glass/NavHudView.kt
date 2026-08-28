@@ -9,6 +9,7 @@ import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.View
 import com.glass.dining.shared.hud.ReimuHud
+import com.glass.dining.shared.hud.TalkLayout
 import com.glass.dining.shared.hud.TalkPose
 import com.glass.dining.shared.indoor.OccupancyGrid
 import com.glass.dining.shared.indoor.Pose3
@@ -17,7 +18,6 @@ import com.glass.dining.shared.nav.HudLines
 import com.glass.dining.shared.nav.NavProtocol
 import com.glass.nav.glass.spatial.SensorProbe
 import com.glass.nav.glass.spatial.WorldAnchorRenderer
-import kotlin.math.min
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -90,15 +90,14 @@ class NavHudView @JvmOverloads constructor(
     }
 
     private fun drawTalk(canvas: Canvas, cx: Float, w: Float, h: Float) {
-        val size = min(w, h) * 0.38f
-        val cy = h * 0.76f
+        val size = TalkLayout.characterSize(w, h)
+        val cy = TalkLayout.characterCenterY(h)
         val lines = NavProtocol.wrapSpeech(card.speech)
-        val gap = 26f
-        val textBottom = cy - size * 0.52f
-        green.textSize = 20f
+        green.textSize = TalkLayout.TEXT_SIZE_PX
         green.textAlign = Paint.Align.CENTER
+        val textBottom = TalkLayout.textBaselineY(w, h, green.fontMetrics.descent)
         lines.asReversed().forEachIndexed { index, line ->
-            canvas.drawText(line, cx, textBottom - index * gap, green)
+            canvas.drawText(line, cx, textBottom - index * TalkLayout.LINE_GAP_PX, green)
         }
         ReimuHud.draw(
             canvas,

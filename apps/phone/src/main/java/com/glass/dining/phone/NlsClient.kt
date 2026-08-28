@@ -60,6 +60,8 @@ object NlsClient {
 
     fun currentToken(): String = token
 
+    fun hexId(): String = UUID.randomUUID().toString().replace("-", "")
+
     fun websocketUrl(): String {
         val host = gateway.trimEnd('/')
         val scheme = when {

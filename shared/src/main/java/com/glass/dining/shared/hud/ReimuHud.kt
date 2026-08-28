@@ -36,7 +36,7 @@ object ReimuHud {
         val bmp = cache.getOrPut(pose) {
             BitmapFactory.decodeResource(resources, resId(pose))
         }
-        val bob = 3.5f * sin(tSec * 2.4f)
+        val bob = TalkLayout.BOB_PX * sin(tSec * 2.4f)
         val h = size
         val w = h * bmp.width / bmp.height
         dest.set(cx - w / 2f, cy - h / 2f + bob, cx + w / 2f, cy + h / 2f + bob)

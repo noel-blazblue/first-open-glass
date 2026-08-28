@@ -35,6 +35,7 @@ import com.glass.dining.shared.agent.PlaceRef
 import com.glass.dining.shared.agent.PlaceResolver
 import com.glass.dining.shared.agent.SceneObservation
 import com.glass.dining.shared.agent.ScenePerception
+import com.glass.dining.shared.agent.SpeechPriority
 import com.glass.dining.shared.agent.WorldContext
 import com.glass.dining.shared.nav.LandmarkPlanner
 import com.glass.dining.shared.nav.LandmarkSignage
@@ -102,13 +103,39 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
     private val talk = TalkTurn()
     private val main = Handler(Looper.getMainLooper())
+    private val heardAsk = HeardAskGate(
+        postDelayed = { r, ms -> main.postDelayed(r, ms) },
+        cancelDelayed = { r -> main.removeCallbacks(r) },
+        showHeard = { showHeardCard(it) },
+        commit = { onHeard(it) },
+    )
+    private val output = ConversationOutputCoordinator(
+        talk = talk,
+        main = main,
+        skillLocked = {
+            session.activeSkill == ActiveSkill.NAV ||
+                session.activeSkill == ActiveSkill.MENU ||
+                session.activeSkill == ActiveSkill.COUPON ||
+                session.activeSkill == ActiveSkill.PAY ||
+                recommendedThisTurn ||
+                selectedThisTurn
+        },
+        publish = { card, qa, status ->
+            _ui.update { state ->
+                state.copy(
+                    card = card ?: state.card,
+                    lastQa = qa,
+                    status = status,
+                )
+            }
+            if (card != null) CxrLinkHost.showCard(card)
+        },
+    )
     private val unmuteAfterTts = Runnable {
         if (!_ui.value.talking || talk.asking || _ui.value.recognizing || PhoneTts.speaking) return@Runnable
         GlassAsr.muted = false
         showListeningCard()
     }
-    @Volatile private var lastHudAt: Long = 0
-    @Volatile private var spokenChars: Int = 0
     @Volatile private var talkPausedByUser: Boolean = false
     @Volatile private var recommendedThisTurn: Boolean = false
     @Volatile private var selectedThisTurn: Boolean = false
@@ -158,17 +185,18 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(status = line) }
         }
         CxrLinkHost.onAudioPcm = { pcm -> GlassAsr.feed(pcm) }
-        GlassAsr.onEndpoint = { onAsrEndpoint() }
-        GlassAsr.onUtterance = { text -> onHeard(text) }
+        GlassAsr.onUtterance = { text -> heardAsk.onFinal(text) }
         GlassAsr.onError = { message -> setStatus(message) }
         GlassAsr.onPartial = { text ->
             if (text.isBlank()) {
                 showListeningCard()
             } else {
-                showHeardCard(text)
+                heardAsk.onPartial(text)
             }
         }
         PhoneTts.onIdle = { onTalkIdle() }
+        PhoneTts.onProgress = { played -> output.onPlayed(played) }
+        PhoneTts.onAudible = { output.onAudible() }
         CxrLinkHost.onHudOpened = { onHudOpened() }
         CxrLinkHost.onGlassReady = { link.onGlassReady() }
         CxrLinkHost.onGlassLost = { link.onGlassLost() }
@@ -351,7 +379,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 lastLandmarkStage = stage
                 Log.i(TAG, "indoor stage=$stage mode=${hint.mode} nodes=${indoor.liveMap().nodes.size} text=${hint.text}")
                 if (hint.turn != "arrive" && hint.text.isNotBlank()) {
-                    PhoneTts.speak(hint.text)
+                    PhoneTts.speak(hint.text, SpeechPriority.NAV)
                 }
             }
         }
@@ -476,15 +504,16 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
     fun ask(question: String) {
         val text = question.trim().ifBlank { return }
+        heardAsk.cancel()
         val seq = talk.begin()
+        PhoneAi.abortStream()
         PhoneTts.stop()
         main.removeCallbacks(unmuteAfterTts)
         GlassAsr.muted = false
         recommendedThisTurn = false
         selectedThisTurn = false
         rememberSpokenFloor(text)
-        spokenChars = 0
-        lastHudAt = 0
+        output.begin(seq, text)
         val thinking = HudCard.thinking(currentMatch(), text, navCard())
         _ui.update { state ->
             CxrLinkHost.showCard(thinking)
@@ -507,14 +536,19 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                         tools,
                         onDelta = { partial ->
                             main.post {
-                                if (talk.isCurrent(seq)) onStreamDelta(text, partial, done = false)
+                                if (talk.isCurrent(seq)) output.onModelText(seq, partial, done = false)
+                            }
+                        },
+                        onContinueSpeak = {
+                            main.post {
+                                if (talk.isCurrent(seq)) output.onToolStep(seq)
                             }
                         },
                         cancel = { !talk.isCurrent(seq) },
                     )
                 }
-                if (talk.isCurrent(seq)) {
-                    onStreamDelta(text, reply.speak, done = true)
+                main.post {
+                    if (talk.isCurrent(seq)) output.onModelText(seq, reply.speak, done = true)
                 }
             } finally {
                 talk.finishIfCurrent(seq)
@@ -584,6 +618,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun stopTalk(speak: Boolean) {
         talk.cancel()
+        heardAsk.cancel()
         main.removeCallbacks(unmuteAfterTts)
         CxrLinkHost.stopGlassMic()
         GlassAsr.stop()
@@ -1013,46 +1048,6 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         Log.i(TAG, "look ${result.store.id} $summary")
     }
 
-    private fun onStreamDelta(question: String, partial: String, done: Boolean) {
-        if (partial.isBlank()) return
-        val now = SystemClock.uptimeMillis()
-        if (!done && now - lastHudAt < 80) {
-            speakNewSentences(partial, done = false)
-            return
-        }
-        lastHudAt = now
-        val skillLocked = session.activeSkill == ActiveSkill.NAV ||
-            session.activeSkill == ActiveSkill.MENU ||
-            session.activeSkill == ActiveSkill.COUPON ||
-            session.activeSkill == ActiveSkill.PAY ||
-            recommendedThisTurn ||
-            selectedThisTurn
-        if (skillLocked) {
-            _ui.update {
-                it.copy(
-                    lastQa = QaResult(it.question.ifBlank { question }, "ask", partial, partial),
-                    status = partial,
-                )
-            }
-            if (done) {
-                val card = navCard() ?: _ui.value.card
-                CxrLinkHost.showCard(card)
-            }
-            speakNewSentences(partial, done)
-            return
-        }
-        val card = HudCard.talk(partial, pose = HudCard.POSE_SPEAK)
-        _ui.update {
-            it.copy(
-                card = card,
-                lastQa = QaResult(it.question.ifBlank { question }, "ask", partial, partial),
-                status = partial,
-            )
-        }
-        CxrLinkHost.showCard(card)
-        speakNewSentences(partial, done)
-    }
-
     private fun currentMatch(): MatchResult? {
         return _ui.value.match ?: session.lastMatch
     }
@@ -1098,13 +1093,6 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     private fun scheduleUnmute() {
         main.removeCallbacks(unmuteAfterTts)
         main.postDelayed(unmuteAfterTts, 700)
-    }
-
-    private fun onAsrEndpoint() {
-        if (!_ui.value.talking || _ui.value.recognizing) return
-        val thinking = HudCard.thinking(currentMatch(), navCard = navCard())
-        _ui.update { it.copy(card = thinking, asrPartial = "", status = "思考中") }
-        CxrLinkHost.showCard(thinking)
     }
 
     private fun navCard(): HudCard? {
@@ -1250,7 +1238,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             CxrLinkHost.showCard(card)
         }
         if (wasNav && !silent) {
-            PhoneTts.speak("导航停了")
+            PhoneTts.speak("导航停了", SpeechPriority.NAV)
         }
     }
 
@@ -1300,7 +1288,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         CxrLinkHost.showCard(card)
         if (hint.turn == "arrive" && !announcedArrive) {
             announcedArrive = true
-            PhoneTts.speak("到了")
+            PhoneTts.speak("到了", SpeechPriority.NAV)
         }
     }
 
@@ -1321,31 +1309,6 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-
-    private fun speakNewSentences(partial: String, done: Boolean) {
-        val unread = if (spokenChars >= partial.length) {
-            ""
-        } else {
-            partial.substring(spokenChars)
-        }
-        if (unread.isBlank() && !done) return
-        val ends = setOf('。', '！', '？', '；', '!', '?', '.', '\n')
-        val buf = StringBuilder()
-        for (ch in unread) {
-            buf.append(ch)
-            if (ch in ends && buf.isNotBlank()) {
-                val chunk = buf.toString().trim()
-                if (spokenChars == 0) PhoneTts.speak(chunk) else PhoneTts.speakMore(chunk)
-                spokenChars += buf.length
-                buf.clear()
-            }
-        }
-        if (done && buf.isNotBlank()) {
-            val chunk = buf.toString().trim()
-            if (spokenChars == 0) PhoneTts.speak(chunk) else PhoneTts.speakMore(chunk)
-            spokenChars = partial.length
-        }
-    }
 
     private fun publishAgentContext() {
         val world = worldContext()
@@ -1420,12 +1383,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             this@DiningViewModel.publishMatch(result, source)
         }
         override fun publishTalk(speak: String, tts: Boolean) {
-            val card = HudCard.talk(speak, pose = HudCard.POSE_SPEAK)
-            main.post {
-                _ui.update { it.copy(card = card, status = speak) }
-                CxrLinkHost.showCard(card)
-                if (tts) PhoneTts.speak(speak)
-            }
+            main.post { output.speakDirect(speak, tts) }
         }
         override fun showCard(card: HudCard) {
             main.post { CxrLinkHost.showCard(card) }

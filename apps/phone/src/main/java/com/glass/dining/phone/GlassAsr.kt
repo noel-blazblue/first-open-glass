@@ -126,6 +126,7 @@ object GlassAsr {
             var lastVoiceAt = 0L
             var lastPartialAt = 0L
             var bestPartial = ""
+            var lastPosted = ""
             var pending = ByteArray(0)
             while (running.get()) {
                 val chunk = incoming.poll(80, TimeUnit.MILLISECONDS) ?: continue
@@ -166,6 +167,10 @@ object GlassAsr {
                 if (partial.length > bestPartial.length) {
                     bestPartial = partial
                     lastPartialAt = now
+                }
+                if (partial.isNotBlank() && partial != lastPosted) {
+                    lastPosted = partial
+                    main.post { onPartial?.invoke(partial) }
                 }
                 maybeBarge(partial)
                 if (level >= holdThr) {
@@ -308,21 +313,22 @@ object GlassAsr {
     }
 
     private fun maybeBarge(partial: String) {
-        if (!PhoneTts.speaking) return
-        if (!EchoFilter.isUserPartial(partial, PhoneTts.spokenText)) return
+        if (!PhoneTts.speaking || !PhoneTts.audible) return
+        if (PhoneTts.echoWindow.isBlank()) return
+        if (!EchoFilter.isUserPartial(partial, PhoneTts.echoWindow)) return
         Log.i(TAG, "barge partial=$partial")
         main.post { PhoneTts.stop() }
     }
 
     private fun emitUtterance(text: String) {
         if (text.isBlank()) return
-        if (EchoFilter.isEcho(text, PhoneTts.spokenText)) {
+        if (EchoFilter.isEcho(text, PhoneTts.echoWindow)) {
             Log.i(TAG, "echo ignored $text")
             return
         }
         muted = true
         main.post {
-            onEndpoint?.invoke()
+            onPartial?.invoke(text)
             onUtterance?.invoke(text)
         }
     }

@@ -35,9 +35,21 @@ class EchoFilterTest {
     }
 
     @Test
-    fun shortSharedCharsAreNotEcho() {
-        val spoken = "附近找到3家海底捞，你想去哪一家？"
-        assertFalse(EchoFilter.isEcho("去第一家。", spoken))
-        assertTrue(EchoFilter.isUserPartial("去第一家。", spoken))
+    fun synthesizingSilenceIsNotEcho() {
+        assertFalse(EchoFilter.isEcho("不对去巴奴", ""))
+        assertFalse(EchoFilter.isUserPartial("不对去巴奴", ""))
+    }
+
+    @Test
+    fun futureQueuedTextIsNotEcho() {
+        val audible = "附近找到3家"
+        assertFalse(EchoFilter.isEcho("去第一家", audible))
+        assertTrue(EchoFilter.isUserPartial("去第一家", audible))
+    }
+
+    @Test
+    fun oldSessionAudibleStillCountsAsEcho() {
+        val audible = "开始去海底捞顺着路走大约三百米"
+        assertTrue(EchoFilter.isEcho("开始去海底捞", audible))
     }
 }

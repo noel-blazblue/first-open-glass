@@ -2,12 +2,12 @@ package com.glass.dining.shared.agent
 
 /**
  * TTS 被眼镜麦听回去时，识别结果会像正在播的那句。
- * 用整句文本对齐判断回声，不要用两三个字的公共碎片，也不要用 RMS 抢话。
+ * 只对齐已经/正在发出的窗口，不要拿尚未发声的全文误杀用户。
  */
 object EchoFilter {
-    fun isEcho(heard: String, spoken: String): Boolean {
+    fun isEcho(heard: String, audible: String): Boolean {
         val a = normalize(heard)
-        val b = normalize(spoken)
+        val b = normalize(audible)
         if (a.isBlank()) return true
         if (b.isBlank()) return false
         if (a.length >= 2 && b.contains(a)) return true
@@ -16,10 +16,11 @@ object EchoFilter {
         return overlap >= 4 && overlap * 10 >= a.length * 7
     }
 
-    fun isUserPartial(heard: String, spoken: String): Boolean {
+    fun isUserPartial(heard: String, audible: String): Boolean {
         val a = normalize(heard)
         if (hanCount(a) < 2) return false
-        return !isEcho(a, spoken)
+        if (normalize(audible).isBlank()) return false
+        return !isEcho(a, audible)
     }
 
     fun normalize(raw: String): String {

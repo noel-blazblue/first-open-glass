@@ -11,12 +11,14 @@ class AgentLoop(
     fun run(
         messages: MutableList<LlmMessage>,
         userText: String,
-        requestModel: (List<LlmMessage>) -> LlmTurn?,
+        requestModel: (List<LlmMessage>, (LlmStreamDelta) -> Unit) -> LlmTurn?,
         execute: (LlmToolCall) -> ToolResult,
         specOf: (String) -> ToolSpec?,
         policy: ActionPolicy = ActionPolicy(),
         cancel: () -> Boolean = { false },
         onEvent: (AgentEvent) -> Unit = {},
+        onSpeak: (String) -> Unit = {},
+        onContinueSpeak: () -> Unit = {},
     ): AgentOutcome {
         val runId = "run-${System.currentTimeMillis()}"
         val events = mutableListOf<AgentEvent>()
@@ -30,17 +32,35 @@ class AgentLoop(
                 return AgentOutcome("", step, messages.toList(), cancelled = true, events = events)
             }
             val startedAt = System.currentTimeMillis()
-            val turn = requestModel(messages)
-            if (turn == null) {
+            val assembler = StreamingTurnAssembler()
+            var spoken = ""
+            val turn = requestModel(messages) { delta ->
+                val accepted = assembler.accept(delta)
+                if (accepted.kind != StreamKind.UNKNOWN &&
+                    accepted.content.trim().isNotBlank() &&
+                    accepted.content.length > spoken.length
+                ) {
+                    spoken = accepted.content
+                    onSpeak(spoken)
+                }
+            }
+            if (cancel()) {
+                return AgentOutcome("", step, messages.toList(), cancelled = true, events = events)
+            }
+            if (assembler.mixed) {
+                emit(step, "protocol", "mixed", startedAt, "mixed_content_and_tools")
+            }
+            val resolved = if (assembler.hasData) assembler.finish() else turn
+            if (resolved == null) {
                 emit(step, "error", "model", startedAt, "model_error")
                 return AgentOutcome("", step, messages.toList(), failed = true, events = events)
             }
-            if (turn.toolCalls.isEmpty()) {
-                emit(step, "final", startedAt = startedAt, detail = turn.content.take(80))
-                return AgentOutcome(turn.content.trim(), step, messages.toList(), events = events)
+            if (resolved.toolCalls.isEmpty()) {
+                emit(step, "final", startedAt = startedAt, detail = resolved.content.take(80))
+                return AgentOutcome(resolved.content.trim(), step, messages.toList(), events = events)
             }
-            messages.add(turn.assistant)
-            val ordered = orderCalls(turn.toolCalls, specOf)
+            messages.add(resolved.assistant)
+            val ordered = orderCalls(resolved.toolCalls, specOf)
             val taken = ordered.take(maxToolCallsPerStep)
             val overflow = ordered.drop(maxToolCallsPerStep)
             val results = runCalls(taken, userText, execute, specOf, policy, parallel = canParallel(taken, specOf))
@@ -65,6 +85,7 @@ class AgentLoop(
                 )
             }
             emit(step, "tools", "batch", startedAt, "count=${taken.size}")
+            onContinueSpeak()
         }
         emit(maxSteps, "budget", detail = "maxSteps=$maxSteps")
         return AgentOutcome("", maxSteps, messages.toList(), reachedLimit = true, events = events)

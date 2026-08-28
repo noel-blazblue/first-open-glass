@@ -18,7 +18,7 @@ class AgentLoopTest {
         val out = loop.run(
             messages = messages,
             userText = "今天天气适合走过去吗",
-            requestModel = { LlmTurn("我没有实时天气，只能按你看到的情况判断。") },
+            requestModel = { _, _ -> LlmTurn("我没有实时天气，只能按你看到的情况判断。") },
             execute = { ToolResult.fail("should not run") },
             specOf = { null },
         )
@@ -35,7 +35,7 @@ class AgentLoopTest {
         val out = loop.run(
             messages,
             "附近有药店吗",
-            requestModel = {
+            requestModel = { _, _ ->
                 step += 1
                 if (step == 1) {
                     LlmTurn(toolCalls = listOf(LlmToolCall("1", "search_nearby_places", """{"keyword":"药店"}""")))
@@ -59,7 +59,7 @@ class AgentLoopTest {
         val out = loop.run(
             messages,
             "导航去海底捞",
-            requestModel = {
+            requestModel = { _, _ ->
                 step += 1
                 when (step) {
                     1 -> LlmTurn(toolCalls = listOf(LlmToolCall("1", "recommend", "{}")))
@@ -88,7 +88,7 @@ class AgentLoopTest {
         val out = loop.run(
             messages,
             "一直搜",
-            requestModel = { LlmTurn(toolCalls = listOf(LlmToolCall("x", "search_nearby_places", "{}"))) },
+            requestModel = { _, _ -> LlmTurn(toolCalls = listOf(LlmToolCall("x", "search_nearby_places", "{}"))) },
             execute = { ToolResult.json(true, """{"ok":true}""") },
             specOf = { read },
         )
@@ -103,7 +103,7 @@ class AgentLoopTest {
         val out = loop.run(
             messages,
             "取消",
-            requestModel = { LlmTurn("不该到这") },
+            requestModel = { _, _ -> LlmTurn("不该到这") },
             execute = { ToolResult.fail("no") },
             specOf = { null },
             cancel = { true },
@@ -121,7 +121,7 @@ class AgentLoopTest {
         val out = loop.run(
             messages,
             "帮我付款",
-            requestModel = {
+            requestModel = { _, _ ->
                 step += 1
                 if (step == 1) {
                     LlmTurn(toolCalls = listOf(LlmToolCall("p", "checkout", """{"confirm":true}""")))
@@ -149,7 +149,7 @@ class AgentLoopTest {
         loop.run(
             messages,
             "搜药店",
-            requestModel = {
+            requestModel = { _, _ ->
                 step += 1
                 if (step == 1) {
                     LlmTurn(toolCalls = listOf(LlmToolCall("1", "search_nearby_places", "{}")))
@@ -178,7 +178,7 @@ class AgentLoopTest {
         loop.run(
             messages,
             "出发",
-            requestModel = {
+            requestModel = { _, _ ->
                 step += 1
                 if (step == 1) {
                     LlmTurn(toolCalls = listOf(LlmToolCall("1", "start_navigation", """{"request_id":"nav-1"}""")))
@@ -193,5 +193,72 @@ class AgentLoopTest {
             specOf = { write },
         )
         assertEquals(1, tries.get())
+    }
+
+    @Test
+    fun mixedStreamSpeaksThenRunsTools() {
+        val loop = AgentLoop()
+        val messages = mutableListOf(LlmMessage("user", "附近有店吗"))
+        val ran = AtomicInteger(0)
+        val spoken = ArrayList<String>()
+        val continued = AtomicInteger(0)
+        var step = 0
+        val out = loop.run(
+            messages,
+            "附近有店吗",
+            requestModel = { _, onDelta ->
+                step += 1
+                if (step == 1) {
+                    onDelta(LlmStreamDelta(content = "好的，帮你看下。"))
+                    onDelta(
+                        LlmStreamDelta(
+                            toolCalls = listOf(LlmToolCallDelta(0, "1", "search_nearby_places", "{}")),
+                        ),
+                    )
+                    LlmTurn(
+                        content = "好的，帮你看下。",
+                        toolCalls = listOf(LlmToolCall("1", "search_nearby_places", "{}")),
+                    )
+                } else {
+                    onDelta(LlmStreamDelta(content = "附近有一家药店。", done = true))
+                    LlmTurn("附近有一家药店。")
+                }
+            },
+            execute = {
+                ran.incrementAndGet()
+                ToolResult.json(true, """{"ok":true}""")
+            },
+            specOf = { read },
+            onSpeak = { spoken.add(it) },
+            onContinueSpeak = { continued.incrementAndGet() },
+        )
+        assertFalse(out.failed)
+        assertEquals(1, ran.get())
+        assertEquals(1, continued.get())
+        assertTrue(spoken.first().contains("帮你看下"))
+        assertTrue(out.speak.contains("药店"))
+        assertTrue(out.events.any { it.detail.contains("mixed_content_and_tools") })
+    }
+
+    @Test
+    fun streamingContentSpeaksBeforeFinish() {
+        val loop = AgentLoop()
+        val messages = mutableListOf(LlmMessage("user", "你好"))
+        val spoken = ArrayList<String>()
+        val out = loop.run(
+            messages,
+            "你好",
+            requestModel = { _, onDelta ->
+                onDelta(LlmStreamDelta(content = "你好，"))
+                onDelta(LlmStreamDelta(content = "我在听。", done = true))
+                null
+            },
+            execute = { ToolResult.fail("no") },
+            specOf = { null },
+            onSpeak = { spoken.add(it) },
+        )
+        assertEquals("你好，我在听。", out.speak)
+        assertTrue(spoken.isNotEmpty())
+        assertEquals("你好，我在听。", spoken.last())
     }
 }

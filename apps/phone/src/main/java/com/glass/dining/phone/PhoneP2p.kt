@@ -30,6 +30,9 @@ object PhoneP2p {
     @Volatile var attemptId: String = ""
         private set
 
+    @Volatile var lastError: String = ""
+        private set
+
     var onStatus: ((String) -> Unit)? = null
 
     private val main = Handler(Looper.getMainLooper())
@@ -117,6 +120,7 @@ object PhoneP2p {
         waitingGroup = onGroup
         this.attemptId = attemptId
         active = true
+        lastError = ""
         createAttempts = 0
         creating = false
         lastOffer = null
@@ -130,6 +134,7 @@ object PhoneP2p {
             try {
                 val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
                 if (!wifi.isWifiEnabled) {
+                    Log.w(TAG, "wifi disabled, cannot create Direct group")
                     fail("请打开手机 Wi-Fi 开关。Direct 用这块芯片，不用连家里路由器")
                     return@post
                 }
@@ -284,6 +289,8 @@ object PhoneP2p {
     }
 
     private fun fail(message: String) {
+        lastError = message
+        Log.w(TAG, message)
         main.removeCallbacks(giveUp)
         main.removeCallbacks(advertise)
         main.removeCallbacks(retryCreate)

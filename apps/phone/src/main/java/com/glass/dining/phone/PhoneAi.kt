@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Base64
 import android.util.Log
 import com.glass.dining.shared.agent.AgentPrompts
+import com.glass.dining.shared.agent.LlmStreamDelta
+import com.glass.dining.shared.agent.LlmTurn
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -121,8 +123,18 @@ object PhoneAi {
         return completeMessage(chatModel, messages, timeoutMs, jsonMode = false, tools = tools)
     }
 
-    fun stream(messages: JSONArray, onDelta: ((String) -> Unit)?): AiReply? {
-        return streamChat(messages, onDelta)
+    fun abortStream() {
+        PhoneAiStream.abort()
+    }
+
+    fun streamTurn(
+        messages: JSONArray,
+        tools: JSONArray?,
+        onDelta: (LlmStreamDelta) -> Unit,
+        cancel: () -> Boolean,
+    ): LlmTurn? {
+        if (!ready) return null
+        return PhoneAiStream.streamTurn(chatModel, chatUrl(), token, messages, tools, onDelta, cancel)
     }
 
     private fun vision(jpeg: ByteArray, task: String, ocrText: String): AiReply? {
@@ -182,62 +194,6 @@ object PhoneAi {
             .optJSONArray("choices")
             ?.optJSONObject(0)
             ?.optJSONObject("message")
-    }
-
-    private fun streamChat(messages: JSONArray, onDelta: ((String) -> Unit)?): AiReply? {
-        val body = JSONObject()
-            .put("model", chatModel)
-            .put("messages", messages)
-            .put("max_tokens", 280)
-            .put("stream", true)
-            .put("thinking", JSONObject().put("type", "disabled"))
-        val connection = (URL(chatUrl()).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 12_000
-            readTimeout = 45_000
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            setRequestProperty("Authorization", "Bearer $token")
-            setRequestProperty("Accept", "text/event-stream")
-        }
-        return try {
-            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-            val code = connection.responseCode
-            if (code !in 200..299) {
-                val err = connection.errorStream?.bufferedReader(Charsets.UTF_8)?.readText().orEmpty()
-                Log.w(TAG, "LLM stream http=$code body=${err.take(180)}")
-                return null
-            }
-            val acc = StringBuilder()
-            connection.inputStream.bufferedReader(Charsets.UTF_8).forEachLine { line ->
-                val payload = when {
-                    line.startsWith("data:") -> line.removePrefix("data:").trim()
-                    else -> return@forEachLine
-                }
-                if (payload.isEmpty() || payload == "[DONE]") return@forEachLine
-                val delta = JSONObject(payload)
-                    .optJSONArray("choices")
-                    ?.optJSONObject(0)
-                    ?.optJSONObject("delta")
-                    ?: return@forEachLine
-                val piece = delta.optString("content")
-                if (piece.isBlank()) return@forEachLine
-                acc.append(piece)
-                onDelta?.invoke(acc.toString())
-            }
-            plainReply(acc.toString())
-        } catch (error: Exception) {
-            Log.w(TAG, "LLM stream ${error.javaClass.simpleName}: ${error.message}")
-            null
-        } finally {
-            connection.disconnect()
-        }
-    }
-
-    private fun plainReply(raw: String): AiReply? {
-        val speak = raw.trim().replace(Regex("[\\r\\n]+"), "")
-        if (speak.isBlank()) return null
-        return AiReply(speak, speak, true)
     }
 
     private fun chatUrl(): String = "${baseUrl.trimEnd('/')}/chat/completions"
