@@ -6,11 +6,14 @@ import android.util.Log
 import com.glass.dining.shared.nav.HudLines
 import com.glass.dining.shared.nav.NavHint
 import com.glass.dining.shared.nav.NavProtocol
+import com.glass.dining.shared.place.PlaceWire
+import com.glass.dining.shared.place.StoreHudPayload
 import com.rokid.cxr.CXRServiceBridge
 import com.rokid.cxr.Caps
 
-    class NavBridge(
+class NavBridge(
     private val onCard: (HudLines) -> Unit,
+    private val onStore: (StoreHudPayload) -> Unit,
     private val onHint: (NavHint) -> Unit,
     private val onCamera: (Boolean) -> Unit,
     private val onSnap: () -> Unit,
@@ -60,6 +63,12 @@ import com.rokid.cxr.Caps
                 NavProtocol.CMD_HUD -> {
                     val card = NavProtocol.parseCard(readString(args, 1))
                     main.post { onCard(card) }
+                }
+                NavProtocol.CMD_STORE -> {
+                    val payload = PlaceWire.decode(readString(args, 1))
+                    if (payload != null) {
+                        main.post { onStore(payload) }
+                    }
                 }
                 NavProtocol.CMD_CAMERA_ON -> main.post { onCamera(true) }
                 NavProtocol.CMD_NAV_START -> {

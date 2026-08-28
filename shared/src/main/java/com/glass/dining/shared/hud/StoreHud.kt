@@ -32,6 +32,11 @@ object HudColors {
     val warn = Color(0xFFFFDD66)
     val closed = Color(0xFFFF6B6B)
     val line = Color(0x3322FF88)
+    val title = Color(0xFFF5F7FA)
+    val muted = Color(0xFFB0BCCC)
+    val gold = Color(0xFFFFC857)
+    val cyan = Color(0xFF7EE0F2)
+    val hint = Color(0xFFA8E6C4)
 }
 
 @Composable

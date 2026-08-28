@@ -16,6 +16,7 @@ class ConversationOutputCoordinator(
     private val main: Handler,
     private val skillLocked: () -> Boolean,
     private val publish: (HudCard?, QaResult, String) -> Unit,
+    private val onBeforeTalk: () -> Unit = {},
 ) {
     private val reply = StreamingReplyAssembler()
     private var seq: Int = 0
@@ -79,6 +80,7 @@ class ConversationOutputCoordinator(
     fun speakDirect(text: String, tts: Boolean, priority: SpeechPriority = SpeechPriority.AGENT) {
         val spoken = text.trim()
         if (spoken.isBlank()) return
+        if (!skillLocked()) onBeforeTalk()
         if (tts) {
             if (skillLocked()) {
                 publish(null, QaResult(question, "ask", spoken, spoken), spoken)
@@ -90,6 +92,7 @@ class ConversationOutputCoordinator(
     }
 
     private fun speakChunks(chunks: List<String>) {
+        if (chunks.any { it.isNotBlank() }) onBeforeTalk()
         chunks.forEach { chunk ->
             if (!startedSpeak) {
                 PhoneTts.speak(chunk, SpeechPriority.AGENT)
@@ -116,6 +119,7 @@ class ConversationOutputCoordinator(
         if (shown == lastHudText && !force) return
         lastHudAt = now
         lastHudText = shown
+        if (!skillLocked()) onBeforeTalk()
         val qa = QaResult(question, "ask", shown, shown)
         val card = if (skillLocked()) null else HudCard.talk(shown, pose = HudCard.POSE_SPEAK)
         publish(card, qa, shown)

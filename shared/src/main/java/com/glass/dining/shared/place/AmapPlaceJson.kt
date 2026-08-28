@@ -38,9 +38,16 @@ object AmapPlaceJson {
                 tag = field(item, "tag"),
                 keytag = field(item, "keytag").ifBlank { field(item, "rectag") },
                 alias = field(item, "alias"),
+                photoUrl = firstPhotoUrl(item),
             )
         }
         return AroundResult(ok = true, places = places)
+    }
+
+    private fun firstPhotoUrl(item: String): String {
+        val photos = arrayBody(item, "photos")
+        val first = splitObjects(photos).firstOrNull() ?: return ""
+        return field(first, "url")
     }
 
     private fun field(json: String, key: String): String {

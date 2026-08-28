@@ -132,6 +132,7 @@ class PlaceResolverTest {
         assertEquals(30.2, merged.lat, 0.0001)
         assertEquals("5F", merged.floor)
         assertTrue(merged.catalogBacked)
+        assertEquals(12, merged.waitMinutes)
     }
 
     @Test

@@ -38,7 +38,8 @@ class AmapPlaceJsonTest {
                "business":{"business_area":"望京","cost":"152.00","keytag":"牛肉火锅",
                  "opentime_today":"11:00-23:00","opentime_week":"周一至周日 11:00-23:00",
                  "rating":"4.7","tag":"牛肉","tel":"13581699848"},
-               "indoor":{"indoor_map":"1","floor":"2","truefloor":"2F"}}
+               "indoor":{"indoor_map":"1","floor":"2","truefloor":"2F"},
+               "photos":[{"title":"门面","url":"https://store.is.autonavi.com/showpic/chao.jpg"}]}
             ]}
         """.trimIndent()
         val place = AmapPlaceJson.parseAround(raw).places.single()
@@ -49,6 +50,7 @@ class AmapPlaceJsonTest {
         assertEquals("2F", place.floor)
         assertEquals("13581699848", place.tel)
         assertEquals("牛肉火锅", place.keytag)
+        assertEquals("https://store.is.autonavi.com/showpic/chao.jpg", place.photoUrl)
     }
 
     @Test

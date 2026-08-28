@@ -9,6 +9,7 @@ import org.json.JSONObject
 class ToolRegistry {
     private val specs = LinkedHashMap<String, ToolSpec>()
     private val executors = LinkedHashMap<String, (JSONObject) -> String>()
+    var onTool: (String) -> Unit = {}
 
     fun register(spec: ToolSpec, execute: (JSONObject) -> String) {
         specs[spec.name] = spec
@@ -40,6 +41,7 @@ class ToolRegistry {
 
     fun execute(name: String, args: JSONObject): ToolResult {
         val canonical = AgentToolCatalog.ALIASES[name] ?: name
+        onTool(canonical)
         val exec = executors[canonical]
             ?: return ToolResult.fail("未知工具 $name", code = "unknown_tool")
         return try {

@@ -24,6 +24,11 @@ object PlaceResolver {
             floor = store.floor,
             category = store.category,
         )
+        val deals = if (store.catalogBacked) {
+            store.deals.take(2).joinToString("；") { "${it.title} ¥${it.price}" }
+        } else {
+            ""
+        }
         return PlaceProfile(
             ref = ref,
             rating = store.rating,
@@ -33,6 +38,8 @@ object PlaceResolver {
             businessArea = store.businessArea,
             tag = store.tags.joinToString(","),
             keytag = store.category,
+            waitMinutes = if (store.catalogBacked) store.waitMinutes else 0,
+            dealLine = deals,
         )
     }
 
@@ -55,7 +62,7 @@ object PlaceResolver {
             phone = place.tel,
             address = place.address,
             waitTables = 0,
-            waitMinutes = 0,
+            waitMinutes = if (catalog) place.waitMinutes else 0,
             tags = tags,
             deals = emptyList(),
             signatures = emptyList(),
@@ -159,6 +166,9 @@ object PlaceResolver {
             tag = local.tag.ifBlank { poi.tag },
             keytag = local.keytag.ifBlank { poi.keytag },
             alias = local.alias.ifBlank { poi.alias },
+            photoUrl = local.photoUrl.ifBlank { poi.photoUrl },
+            waitMinutes = if (local.catalogBacked) local.waitMinutes else 0,
+            dealLine = if (local.catalogBacked) local.dealLine else "",
         )
     }
 

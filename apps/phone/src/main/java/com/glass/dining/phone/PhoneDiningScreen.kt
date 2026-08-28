@@ -145,6 +145,8 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
         Text("镜片预览", color = TextMain, fontSize = 14.sp)
         GlassesHudPreview(
             card = state.card,
+            store = state.store,
+            storeCaption = state.storeCaption,
             modifier = Modifier
                 .padding(top = 8.dp)
                 .fillMaxWidth()

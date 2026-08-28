@@ -86,6 +86,8 @@ data class PhoneUiState(
     val asrPartial: String = "",
     val skill: ActiveSkill = ActiveSkill.NONE,
     val navHint: NavHint? = null,
+    val store: PlaceProfile? = null,
+    val storeCaption: String = "",
     val rtcOn: Boolean = false,
     val rtcLine: String = "",
     val agentContext: String = "",
@@ -103,6 +105,15 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
     private val talk = TalkTurn()
     private val main = Handler(Looper.getMainLooper())
+    private val storePanel = StorePanelSession(
+        postDelayed = { r, ms -> main.postDelayed(r, ms) },
+        cancelDelayed = { r -> main.removeCallbacks(r) },
+        storeShowing = { CxrHud.lastStore != null },
+        navigating = { session.activeSkill == ActiveSkill.NAV },
+        busy = { talk.asking || _ui.value.recognizing || PhoneTts.speaking },
+        onDismiss = { clearStoreHud() },
+        onIdleFace = { showTalkFace() },
+    )
     private val heardAsk = HeardAskGate(
         postDelayed = { r, ms -> main.postDelayed(r, ms) },
         cancelDelayed = { r -> main.removeCallbacks(r) },
@@ -130,11 +141,13 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (card != null) CxrLinkHost.showCard(card)
         },
+        onBeforeTalk = { storePanel.maybeDismissOffTopic() },
     )
     private val unmuteAfterTts = Runnable {
         if (!_ui.value.talking || talk.asking || _ui.value.recognizing || PhoneTts.speaking) return@Runnable
         GlassAsr.muted = false
         showListeningCard()
+        storePanel.armIfIdle()
     }
     @Volatile private var talkPausedByUser: Boolean = false
     @Volatile private var recommendedThisTurn: Boolean = false
@@ -156,6 +169,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         VisionToolProvider(runtime).register(registry)
         NavigationToolProvider(runtime).register(registry)
         CommerceToolProvider(runtime).register(registry)
+        registry.onTool = { name -> storePanel.noteTool(name) }
     }
     private val link = VisionLinkCoordinator(
         app = app,
@@ -190,7 +204,9 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         GlassAsr.onPartial = { text ->
             if (text.isBlank()) {
                 showListeningCard()
+                if (!talk.asking) storePanel.armIfIdle()
             } else {
+                storePanel.pause()
                 heardAsk.onPartial(text)
             }
         }
@@ -255,6 +271,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         } catch (_: Exception) {
         }
         main.removeCallbacks(unmuteAfterTts)
+        storePanel.cancel()
         stopTalk(speak = false)
         stopNavInternal(silent = true)
         CxrLinkHost.onAudioPcm = null
@@ -509,6 +526,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         PhoneAi.abortStream()
         PhoneTts.stop()
         main.removeCallbacks(unmuteAfterTts)
+        storePanel.beginTurn()
         GlassAsr.muted = false
         recommendedThisTurn = false
         selectedThisTurn = false
@@ -516,7 +534,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         output.begin(seq, text)
         val thinking = HudCard.thinking(currentMatch(), text, navCard())
         _ui.update { state ->
-            CxrLinkHost.showCard(thinking)
+            if (CxrHud.lastStore == null) CxrLinkHost.showCard(thinking)
             state.copy(
                 question = text,
                 status = "DeepSeek 思考中…",
@@ -552,8 +570,12 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } finally {
                 talk.finishIfCurrent(seq)
-                if (talk.isCurrent(seq) && _ui.value.talking && !PhoneTts.speaking) {
-                    scheduleUnmute()
+                main.post {
+                    if (talk.isCurrent(seq)) storePanel.maybeDismissOffTopic()
+                    if (talk.isCurrent(seq) && _ui.value.talking && !PhoneTts.speaking) {
+                        scheduleUnmute()
+                    }
+                    storePanel.armIfIdle()
                 }
             }
         }
@@ -1028,22 +1050,51 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun publishStore(place: PlaceProfile, status: String, intent: String, caption: String = "") {
+        storePanel.noteStoreShown()
+        main.post {
+            _ui.update {
+                it.copy(
+                    store = place,
+                    storeCaption = caption,
+                    skill = ActiveSkill.BROWSE,
+                    status = status,
+                    recognizing = false,
+                    match = session.lastMatch,
+                    lastQa = QaResult(status, intent, status, status),
+                    navHint = null,
+                )
+            }
+            CxrLinkHost.showStore(place, caption)
+        }
+    }
+
+    private fun displayPlace(result: MatchResult): PlaceProfile {
+        val cached = cachedPlaces.firstOrNull { it.id == result.store.id || it.storeId == result.store.id }
+        if (cached != null && !result.store.catalogBacked) return cached
+        if (cached != null && result.store.catalogBacked) {
+            return PlaceResolver.merge(listOf(result.store), listOf(cached)).first()
+        }
+        return PlaceResolver.fromStore(result.store)
+    }
+
     private fun publishMatch(result: MatchResult, source: String) {
         talk.finishAsking()
-        val card = HudCard.fromMatch(result)
+        val place = displayPlace(result)
         val summary = "$source：${result.store.shortName}"
         _ui.update {
             it.copy(
                 match = result,
+                store = place,
                 lastQa = QaResult("看店识别", "look", summary, result.tts),
-                card = card,
                 status = result.tts,
                 recognizing = false,
                 skill = ActiveSkill.BROWSE,
                 navHint = null,
             )
         }
-        CxrLinkHost.showCard(card)
+        storePanel.noteStoreShown()
+        CxrLinkHost.showStore(place)
         PhoneTts.speak(result.tts)
         Log.i(TAG, "look ${result.store.id} $summary")
     }
@@ -1063,6 +1114,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun showListeningCard() {
         if (!_ui.value.talking || talk.asking || _ui.value.recognizing) return
+        if (CxrHud.lastStore != null) return
         val card = HudCard.listening(currentMatch(), navCard = navCard())
         _ui.update { it.copy(card = card) }
         CxrLinkHost.showCard(card)
@@ -1070,8 +1122,25 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun showHeardCard(heard: String) {
         if (!_ui.value.talking || _ui.value.recognizing) return
+        if (CxrHud.lastStore != null) return
         val card = HudCard.listening(currentMatch(), heard = heard, navCard = navCard())
         _ui.update { it.copy(card = card, asrPartial = heard) }
+        CxrLinkHost.showCard(card)
+    }
+
+    private fun clearStoreHud() {
+        storePanel.cancel()
+        CxrLinkHost.dismissStore()
+        _ui.update { it.copy(store = null, storeCaption = "") }
+    }
+
+    private fun showTalkFace() {
+        val card = if (_ui.value.talking) {
+            HudCard.listening(null, navCard = navCard())
+        } else {
+            HudCard.idle()
+        }
+        _ui.update { it.copy(card = card) }
         CxrLinkHost.showCard(card)
     }
 
@@ -1204,6 +1273,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             }
             CxrLinkHost.startNav(hint)
             CxrLinkHost.showCard(card)
+            storePanel.cancel()
         }
         if (!outdoorFix) kickOpenVisionStream()
         return null
@@ -1224,18 +1294,25 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         if (wasNav) {
             CxrLinkHost.stopNav()
         }
-        val card = currentMatch()?.let { HudCard.fromMatch(it) } ?: HudCard.idle()
+        val place = currentMatch()?.let { displayPlace(it) }
+        val card = if (place == null) HudCard.idle() else _ui.value.card
         val skill = session.activeSkill
         main.post {
             _ui.update {
                 it.copy(
                     skill = skill,
                     navHint = null,
+                    store = place ?: it.store,
                     card = card,
                     status = if (wasNav) "导航停了" else it.status,
                 )
             }
-            CxrLinkHost.showCard(card)
+            if (place != null) {
+                storePanel.noteStoreShown()
+                CxrLinkHost.showStore(place)
+            } else {
+                CxrLinkHost.showCard(card)
+            }
         }
         if (wasNav && !silent) {
             PhoneTts.speak("导航停了", SpeechPriority.NAV)
@@ -1383,6 +1460,9 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }
         override fun publishMatch(result: MatchResult, source: String) {
             this@DiningViewModel.publishMatch(result, source)
+        }
+        override fun publishStore(place: PlaceProfile, status: String, intent: String, caption: String) {
+            this@DiningViewModel.publishStore(place, status, intent, caption)
         }
         override fun publishTalk(speak: String, tts: Boolean) {
             main.post { output.speakDirect(speak, tts) }

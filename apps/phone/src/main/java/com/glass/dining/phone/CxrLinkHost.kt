@@ -7,6 +7,7 @@ import android.util.Log
 import com.glass.dining.shared.hud.HudCard
 import com.glass.dining.shared.nav.NavHint
 import com.glass.dining.shared.nav.NavProtocol
+import com.glass.dining.shared.place.PlaceProfile
 import com.rokid.cxr.Caps
 import com.rokid.cxr.link.CXRLink
 import com.rokid.cxr.link.callbacks.IAudioStreamCbk
@@ -14,7 +15,6 @@ import com.rokid.cxr.link.callbacks.ICXRLinkCbk
 import com.rokid.cxr.link.callbacks.ICustomCmdCbk
 import com.rokid.cxr.link.utils.CxrDefs
 import com.rokid.cxr.link.utils.GlassInfo
-import java.util.concurrent.atomic.AtomicLong
 
 object CxrLinkHost {
     const val TAG = "GlassDiningPhone"
@@ -55,17 +55,15 @@ object CxrLinkHost {
     @Volatile private var wantAudio: Boolean = false
     @Volatile private var audioPackets: Int = 0
 
-    private val main = Handler(Looper.getMainLooper())
+    val main = Handler(Looper.getMainLooper())
     private val glassApp = GlassAppSession(main)
     @Volatile private var connecting: Boolean = false
-    @Volatile private var lastCard: HudCard = HudCard.idle()
     @Volatile private var photoWaiter: ((ByteArray?, String?) -> Unit)? = null
-    private val hudSeq = AtomicLong(0)
 
     init {
         glassApp.onStatus = { onStatus?.invoke(it) }
         glassApp.onOpened = {
-            showCard(lastCard)
+            CxrHud.replay()
             if (wantAudio) startGlassMic()
             onHudOpened?.invoke()
         }
@@ -313,44 +311,15 @@ object CxrLinkHost {
     }
 
     fun showCard(card: HudCard) {
-        val clipped = card.clipped()
-        lastCard = clipped
-        val seq = hudSeq.incrementAndGet()
-        main.post {
-            if (seq != hudSeq.get()) return@post
-            if (!linkReady()) {
-                Log.i(TAG, "showCard skipped, CXR not ready title=${clipped.title}")
-                return@post
-            }
-            if (!hudOpened) {
-                ensureGlassApp("hud")
-                return@post
-            }
-            sendCmd(
-                NavProtocol.CMD_HUD,
-                NavProtocol.cardJson(
-                    clipped.title,
-                    clipped.meta,
-                    clipped.wait,
-                    clipped.extra,
-                    clipped.skill,
-                    clipped.layout,
-                    clipped.speech,
-                    clipped.turn,
-                    clipped.meters,
-                    clipped.remaining,
-                    clipped.mode,
-                    clipped.headingDeg,
-                    clipped.elevationDeg,
-                    clipped.stage,
-                    clipped.sessionId,
-                    clipped.tracking,
-                    clipped.waypoints,
-                    clipped.pose,
-                ),
-            )
-            Log.i(TAG, "hud.card layout=${clipped.layout} skill=${clipped.skill} title=${clipped.title}")
-        }
+        CxrHud.showCard(card)
+    }
+
+    fun showStore(place: PlaceProfile, caption: String = "") {
+        CxrHud.showStore(place, caption)
+    }
+
+    fun dismissStore() {
+        CxrHud.dismissStore()
     }
 
     fun startNav(hint: NavHint) {
@@ -398,7 +367,7 @@ object CxrLinkHost {
 
     fun linkReady(): Boolean = cxrConnected && glassBtConnected && sharedLink != null
 
-    private fun sendCmd(cmd: String, json: String? = null) {
+    internal fun sendCmd(cmd: String, json: String? = null) {
         val link = sharedLink ?: return
         if (!linkReady()) {
             Log.i(TAG, "sendCmd skipped, link not ready cmd=$cmd")

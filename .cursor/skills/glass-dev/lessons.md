@@ -1,4 +1,12 @@
-## 2026-08-28 — 听写定稿要先完整上屏，再切思考
+## 2026-08-28 — ADB 空但 USB 还在：先看是不是镜腿折叠关机
+
+- 场景：线还插着，RokidMirror 报 Could not find any ADB device / Server connection failed。电脑 `system_profiler` 仍有 Rokid `0x4ee7`，`adb devices -l` 空。
+- 误判：开 Wi-Fi / Direct 踢掉了 USB 调试；或电脑 adbd 被 `kill-server` 弄挂；或发烫把 USB 烫断了。
+- 根因：眼镜 `sys.boot.reason=shutdown,leg_fold_timeout`。摘下并折叠镜腿后固件超时关机，USB 设备还在枚举，adbd 已经没了。恢复后 `uptime` 只有一两分钟，内核有 `USB_STATE=DISCONNECTED` 再 `CONNECTED/CONFIGURED`。
+- 以后先做：ADB 空先 `getprop sys.boot.reason` 和 `/proc/uptime`。是 `leg_fold_timeout` 就醒眼镜或展开镜腿等它重新开机，不要拔线、不要当投屏坏了。
+- 不要做：把折叠关机说成「电脑认不到 USB」；为恢复 ADB 反复拔插；用发烫单独解释 USB 消失（发烫常导致人摘下折叠，关机原因写在 bootreason）。
+
+
 
 - 场景：说话最后一个字还没看见，镜片已经变成思考或 AI 回复。
 - 误判：ASR 丢字；或字幕折行把末字裁掉。

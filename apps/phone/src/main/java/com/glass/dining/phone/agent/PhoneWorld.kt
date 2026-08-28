@@ -32,6 +32,7 @@ interface PhoneWorld {
     fun stopNav(silent: Boolean)
     fun publishSkillCard(card: HudCard, skill: ActiveSkill, status: String, intent: String)
     fun publishMatch(result: MatchResult, source: String)
+    fun publishStore(place: PlaceProfile, status: String, intent: String, caption: String = "")
     fun publishTalk(speak: String, tts: Boolean)
     fun showCard(card: HudCard)
     fun rememberSpokenStore()

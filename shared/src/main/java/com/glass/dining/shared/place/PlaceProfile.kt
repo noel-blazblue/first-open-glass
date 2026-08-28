@@ -11,6 +11,9 @@ data class PlaceProfile(
     val tag: String = "",
     val keytag: String = "",
     val alias: String = "",
+    val photoUrl: String = "",
+    val waitMinutes: Int = 0,
+    val dealLine: String = "",
 ) {
     val id: String get() = ref.id
     val name: String get() = ref.name

@@ -16,6 +16,7 @@ import com.glass.dining.shared.indoor.Pose3
 import com.glass.dining.shared.indoor.TrackQuality
 import com.glass.dining.shared.nav.HudLines
 import com.glass.dining.shared.nav.NavProtocol
+import com.glass.dining.shared.place.PlaceProfile
 import com.glass.nav.glass.spatial.SensorProbe
 import com.glass.nav.glass.spatial.WorldAnchorRenderer
 import java.text.SimpleDateFormat
@@ -28,6 +29,8 @@ class NavHudView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     @Volatile var card: HudLines = HudLines.idle()
+    @Volatile var store: PlaceProfile? = null
+    @Volatile var storeCaption: String = ""
     @Volatile var status: String = ""
     @Volatile var pitchDeg: Float = 0f
     @Volatile var pose: Pose3 = Pose3()
@@ -73,9 +76,11 @@ class NavHudView @JvmOverloads constructor(
         val w = width.toFloat()
         val h = height.toFloat()
         val cx = w / 2f
+        val shown = store
         when {
-            card.isTalk -> drawTalk(canvas, cx, w, h)
             card.isNav -> drawNav(canvas, cx, w, h)
+            shown != null -> StoreDetailHud.draw(canvas, shown, storeCaption, w, h)
+            card.isTalk -> drawTalk(canvas, cx, w, h)
             else -> drawCard(canvas, cx, h)
         }
         green.textAlign = Paint.Align.LEFT

@@ -14,6 +14,7 @@ object NavProtocol {
     const val CMD_HELLO = "hello"
     const val CMD_READY = "ready"
     const val CMD_HUD = "hud.card"
+    const val CMD_STORE = "hud.store"
     const val CMD_CAMERA_ON = "camera.on"
     const val CMD_CAMERA_OFF = "camera.off"
     const val CMD_CAMERA_SNAP = "camera.snap"

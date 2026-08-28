@@ -112,6 +112,13 @@ class NavActivity : android.app.Activity() {
         bridge = NavBridge(
             onCard = { lines ->
                 hud.card = lines
+                hud.store = null
+                hud.storeCaption = ""
+                hud.invalidate()
+            },
+            onStore = { payload ->
+                hud.store = payload.place
+                hud.storeCaption = payload.caption
                 hud.invalidate()
             },
             onHint = { hint ->

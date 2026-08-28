@@ -60,8 +60,11 @@ object PlaceFacts {
         putIf(obj, "hours_week", place.hoursWeek)
         putIf(obj, "tag", place.tag)
         putIf(obj, "alias", place.alias)
+        putIf(obj, "photo_url", place.photoUrl)
+        putIf(obj, "deal_line", place.dealLine)
         if (place.rating > 0) obj.put("rating", place.rating)
         if (place.avgCost > 0) obj.put("avg_cost", place.avgCost)
+        if (place.catalogBacked && place.waitMinutes > 0) obj.put("wait_minutes", place.waitMinutes)
         return obj
     }
 

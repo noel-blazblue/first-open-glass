@@ -105,19 +105,18 @@ data class HudCard(
         }
 
         fun listening(
-            match: MatchResult? = null,
+            @Suppress("UNUSED_PARAMETER") match: MatchResult? = null,
             heard: String = "",
             navCard: HudCard? = null,
         ): HudCard {
             if (navCard != null && navCard.skill == "nav") return navCard
             if (heard.isNotBlank()) return talk(heard, pose = POSE_LISTEN)
-            if (match != null) return fromStore(match.store)
             return talk("Hi, 我在听", pose = POSE_LISTEN)
         }
 
         fun thinking(
-            match: MatchResult? = null,
-            heard: String = "",
+            @Suppress("UNUSED_PARAMETER") match: MatchResult? = null,
+            @Suppress("UNUSED_PARAMETER") heard: String = "",
             navCard: HudCard? = null,
         ): HudCard {
             if (navCard != null && navCard.skill == "nav") return navCard
@@ -125,7 +124,7 @@ data class HudCard(
         }
 
         fun answering(
-            match: MatchResult?,
+            @Suppress("UNUSED_PARAMETER") match: MatchResult?,
             partial: String,
             done: Boolean,
             navCard: HudCard? = null,
@@ -148,23 +147,12 @@ data class HudCard(
             return thinking(heard = heard)
         }
 
-        fun talkReply(heard: String, hud: String, speak: String): HudCard {
+        fun talkReply(@Suppress("UNUSED_PARAMETER") heard: String, hud: String, speak: String): HudCard {
             return talk(speak.ifBlank { hud }.ifBlank { "Hi, 我在听" }, pose = POSE_SPEAK)
         }
 
-        fun shooting(match: MatchResult? = null, current: HudCard? = null): HudCard {
-            if (match != null) {
-                return fromStore(match.store).copy(
-                    wait = "正在拍照识别",
-                    extra = "请看向店招",
-                ).clipped()
-            }
-            if (current != null && !current.isTalk && current.skill == "browse") {
-                return current.copy(
-                    wait = "正在拍照识别",
-                    extra = "请看向店招",
-                ).clipped()
-            }
+        fun shooting(@Suppress("UNUSED_PARAMETER") match: MatchResult? = null, current: HudCard? = null): HudCard {
+            if (current != null && current.isNav) return current
             return talk("正在拍照", pose = POSE_LOOK)
         }
 

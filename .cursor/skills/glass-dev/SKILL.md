@@ -50,7 +50,7 @@ USB 有线调试和 Wi-Fi 视频**可以同时开**（家里基线）。不要�
 | --- | --- |
 | USB 调试刚连上，`wifi_on=0` | 固件常把眼镜 Wi-Fi 关掉。数据线留着，`svc wifi enable` |
 | 开 Wi-Fi / Direct 之后 | 有线 USB ADB 不应被当成「被踢掉」。Direct 最多影响 STA / 无线 ADB |
-| `adb devices` 空、USB 仍是 Rokid `0x4ee7` | 电脑侧 adbd 握手断了。重启 adb，不要先让人反复拔插 |
+| `adb devices` 空、USB 仍是 Rokid `0x4ee7` | 先 `getprop sys.boot.reason`。`shutdown,leg_fold_timeout` 是摘下折叠关机；否则才是电脑侧 adbd 握手断。重启 adb，不要先拔插 |
 | 视频没画面但已收到 answer | 信令走 CXR/蓝牙；RTP 走 Wi-Fi Direct。查 ICE / `192.168.49`，不是查 USB |
 
 ### 2. 唤醒与显示通路

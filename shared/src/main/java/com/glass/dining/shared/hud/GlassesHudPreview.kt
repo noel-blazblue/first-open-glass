@@ -39,32 +39,36 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.sin
+import com.glass.dining.shared.place.PlaceProfile
 
 @Composable
 fun GlassesHudPreview(
     card: HudCard,
     modifier: Modifier = Modifier,
+    store: PlaceProfile? = null,
+    storeCaption: String = "",
 ) {
     val clipped = card.clipped()
     Box(
         modifier = modifier.background(HudColors.background),
     ) {
-        if (clipped.isTalk) {
-            TalkPreview(clipped, Modifier.fillMaxSize())
-        } else if (clipped.isNav) {
-            NavPreview(clipped, Modifier.fillMaxSize())
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp, vertical = 28.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                PreviewLine(clipped.title, 22, FontWeight.Bold)
-                if (clipped.meta.isNotBlank()) PreviewLine(clipped.meta, 15, FontWeight.Medium)
-                if (clipped.wait.isNotBlank()) PreviewLine(clipped.wait, 15, FontWeight.Normal)
-                if (clipped.extra.isNotBlank()) PreviewLine(clipped.extra, 15, FontWeight.Normal)
+        when {
+            clipped.isNav -> NavPreview(clipped, Modifier.fillMaxSize())
+            store != null -> StorePanelPreview(store, storeCaption, Modifier.fillMaxSize())
+            clipped.isTalk -> TalkPreview(clipped, Modifier.fillMaxSize())
+            else -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp, vertical = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    PreviewLine(clipped.title, 22, FontWeight.Bold)
+                    if (clipped.meta.isNotBlank()) PreviewLine(clipped.meta, 15, FontWeight.Medium)
+                    if (clipped.wait.isNotBlank()) PreviewLine(clipped.wait, 15, FontWeight.Normal)
+                    if (clipped.extra.isNotBlank()) PreviewLine(clipped.extra, 15, FontWeight.Normal)
+                }
             }
         }
         Text(

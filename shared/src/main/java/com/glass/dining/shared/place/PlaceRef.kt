@@ -25,6 +25,9 @@ data class PlaceRef(
         tag: String = "",
         keytag: String = "",
         alias: String = "",
+        photoUrl: String = "",
+        waitMinutes: Int = 0,
+        dealLine: String = "",
     ): PlaceProfile {
         return PlaceProfile(
             ref = this,
@@ -37,6 +40,9 @@ data class PlaceRef(
             tag = tag,
             keytag = keytag,
             alias = alias,
+            photoUrl = photoUrl,
+            waitMinutes = waitMinutes,
+            dealLine = dealLine,
         )
     }
 

@@ -2,8 +2,8 @@ package com.glass.dining.phone.agent
 
 import com.glass.dining.shared.agent.AgentToolCatalog
 import com.glass.dining.shared.place.PlaceFacts
+import com.glass.dining.shared.place.PlaceResolver
 import com.glass.dining.shared.engine.StoreVision
-import com.glass.dining.shared.hud.HudCard
 import com.glass.dining.shared.model.ActiveSkill
 import org.json.JSONObject
 
@@ -38,7 +38,10 @@ class DiningToolProvider(private val world: PhoneWorld) {
                 .toString()
         world.recommendedThisTurn = true
         world.rememberSpokenStore()
-        world.publishSkillCard(HudCard.fromRecommend(result), ActiveSkill.BROWSE, result.tts, "recommend")
+        val others = result.candidates.drop(1).joinToString("、") { it.shortName }
+        val caption = if (others.isBlank()) "" else "还有$others"
+        val cached = world.latestPlaces().firstOrNull { it.id == result.store.id || it.storeId == result.store.id }
+        world.publishStore(cached ?: PlaceResolver.fromStore(result.store), result.tts, "recommend", caption)
         return facts(result).put("message", result.tts).toString()
     }
 

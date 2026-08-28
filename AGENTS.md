@@ -29,6 +29,13 @@
 - 真机系统版本号不含 `e` 时，不要把企业专有 SDK 硬接到主路径；缺的能力优先用 CustomApp 原生实现。
 - **做通用型智能 Agent，禁止定制化、写死业务。** 见下方「通用 Agent」。
 
+## 给用户看设计图
+
+用户要看 HUD / 界面效果图时，用 Cursor 的 **`GenerateImage`**：先 `GetDynamicTools`（`namespace=cursor`，`toolName=GenerateImage`），再 `CallDynamicTool` 出图。图会作为工具结果出现在聊天里。
+
+- 当轮以出图为主：短中文说明 + `GenerateImage`。回复里 **不要** 再 markdown `![]()` 引用，客户端会自己把图贴上。
+- **禁止** 用 Python / Pillow 自己画 PNG、把文件拷进仓库再贴路径、或 `Read` 图片后再用文字描述。那些图用户在聊天里看不见。
+
 ## 眼镜 APK 安装（硬规则）
 
 `apps/glass-nav` **只能**通过电脑 ADB 直装，禁止任何手机/CXR 中转。
