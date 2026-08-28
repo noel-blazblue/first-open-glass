@@ -11,7 +11,7 @@ class StorePanelSessionTest {
     fun askStoreDoesNotDismiss() {
         val env = Env(store = true)
         env.session.beginTurn()
-        env.session.noteTool(AgentToolCatalog.ASK_STORE.name)
+        env.session.noteTool(AgentToolCatalog.GET_PLACE_DETAILS.name)
         env.session.maybeDismissOffTopic()
         assertEquals(0, env.dismissed)
         assertTrue(env.matchBound)

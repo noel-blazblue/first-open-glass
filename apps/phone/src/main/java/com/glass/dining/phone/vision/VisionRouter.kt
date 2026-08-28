@@ -2,7 +2,7 @@ package com.glass.dining.phone.vision
 
 import android.graphics.Bitmap
 import android.util.Log
-import com.glass.dining.shared.engine.StoreVision
+import com.glass.dining.shared.catalog.StoreVision
 import com.glass.dining.shared.model.Store
 import com.glass.dining.shared.vision.LocalExtract
 import com.glass.dining.shared.vision.VisionDecision

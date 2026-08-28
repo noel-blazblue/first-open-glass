@@ -64,10 +64,9 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp),
         )
-        if (state.skill.name != "NONE") {
+        if (state.navigating) {
             Text(
-                "当前技能：${state.skill.name.lowercase()}" +
-                    (state.navHint?.let { " · ${it.text}" } ?: ""),
+                "正在导航" + (state.navHint?.let { " · ${it.text}" } ?: ""),
                 color = HudColors.green,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(top = 4.dp),

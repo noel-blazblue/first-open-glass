@@ -38,7 +38,7 @@ class GlassAppSession(
                 if (installed) {
                     "眼镜到餐页已安装"
                 } else {
-                    "眼镜还没装到餐 APK，请用电脑 adb 安装 apps/glass-nav（installGlassAdb）"
+                    "眼镜还没装到餐 APK，请用电脑 adb 安装 apps/glass（installGlassAdb）"
                 },
             )
             if (installed && CxrLinkHost.linkReady()) {

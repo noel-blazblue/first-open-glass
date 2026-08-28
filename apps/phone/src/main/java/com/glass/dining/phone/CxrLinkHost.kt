@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.glass.dining.phone.hud.CxrHud
 import com.glass.dining.shared.hud.HudCard
 import com.glass.dining.shared.nav.NavHint
 import com.glass.dining.shared.nav.NavProtocol

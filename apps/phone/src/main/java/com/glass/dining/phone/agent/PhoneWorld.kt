@@ -4,11 +4,11 @@ import android.app.Application
 import com.glass.dining.phone.PhoneUiState
 import com.glass.dining.phone.nav.GeoPoint
 import com.glass.dining.shared.agent.SceneObservation
-import com.glass.dining.shared.engine.DiningSession
 import com.glass.dining.shared.hud.HudCard
-import com.glass.dining.shared.model.ActiveSkill
 import com.glass.dining.shared.model.MatchResult
 import com.glass.dining.shared.place.PlaceProfile
+import com.glass.dining.shared.session.DiningSession
+import com.glass.dining.shared.session.DismissReason
 import com.glass.dining.shared.vision.VisionIntent
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -30,7 +30,8 @@ interface PhoneWorld {
     fun capture(intent: VisionIntent, spatial: Boolean = false, bindStore: Boolean = true): String
     fun startNav(spoken: String): String?
     fun stopNav(silent: Boolean)
-    fun publishSkillCard(card: HudCard, skill: ActiveSkill, status: String, intent: String)
+    fun dismiss(reason: DismissReason)
+    fun publishSkillCard(card: HudCard, status: String, intent: String)
     fun publishMatch(result: MatchResult, source: String)
     fun publishStore(place: PlaceProfile, status: String, intent: String, caption: String = "")
     fun publishTalk(speak: String, tts: Boolean)

@@ -3,6 +3,7 @@ package com.glass.dining.phone.agent
 import android.util.Log
 import com.glass.dining.phone.AiReply
 import com.glass.dining.phone.PhoneAi
+import com.glass.dining.phone.tools.ToolRegistry
 import com.glass.dining.shared.agent.ActionPolicy
 import com.glass.dining.shared.agent.AgentContextAssembler
 import com.glass.dining.shared.agent.AgentLoop

@@ -11,14 +11,15 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.glass.dining.phone.agent.CommerceToolProvider
-import com.glass.dining.phone.agent.DiningToolProvider
 import com.glass.dining.phone.agent.EnvironmentWatcher
-import com.glass.dining.phone.agent.NavigationToolProvider
 import com.glass.dining.phone.agent.PhoneAgent
 import com.glass.dining.phone.agent.PhoneWorld
-import com.glass.dining.phone.agent.ToolRegistry
-import com.glass.dining.phone.agent.VisionToolProvider
+import com.glass.dining.phone.hud.CxrHud
+import com.glass.dining.phone.tools.CommerceToolProvider
+import com.glass.dining.phone.tools.DiningToolProvider
+import com.glass.dining.phone.tools.NavigationToolProvider
+import com.glass.dining.phone.tools.ToolRegistry
+import com.glass.dining.phone.tools.VisionToolProvider
 import com.glass.dining.phone.link.LinkUiState
 import com.glass.dining.phone.link.VisionLinkCoordinator
 import com.glass.dining.phone.indoor.IndoorNavCoordinator
@@ -48,10 +49,10 @@ import com.glass.dining.phone.vision.StreamVision
 import com.glass.dining.phone.vision.VisionRouter
 import com.glass.dining.shared.catalog.MemoryStoreCatalog
 import com.glass.dining.shared.catalog.StoreGeo
-import com.glass.dining.shared.engine.DiningSession
+import com.glass.dining.shared.session.DiningSession
+import com.glass.dining.shared.session.DismissReason
 import com.glass.dining.shared.hud.HudCard
 import com.glass.dining.shared.mock.MockCommerce
-import com.glass.dining.shared.model.ActiveSkill
 import com.glass.dining.shared.model.MatchResult
 import com.glass.dining.shared.model.MenuItem
 import com.glass.dining.shared.model.QaResult
@@ -84,7 +85,7 @@ data class PhoneUiState(
     val recognizing: Boolean = false,
     val talking: Boolean = false,
     val asrPartial: String = "",
-    val skill: ActiveSkill = ActiveSkill.NONE,
+    val navigating: Boolean = false,
     val navHint: NavHint? = null,
     val store: PlaceProfile? = null,
     val storeCaption: String = "",
@@ -109,7 +110,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         postDelayed = { r, ms -> main.postDelayed(r, ms) },
         cancelDelayed = { r -> main.removeCallbacks(r) },
         storeShowing = { CxrHud.lastStore != null },
-        navigating = { session.activeSkill == ActiveSkill.NAV },
+        navigating = { session.navigating },
         busy = { talk.asking || _ui.value.recognizing || PhoneTts.speaking },
         onDismiss = { clearStoreHud() },
         onIdleFace = { showTalkFace() },
@@ -124,12 +125,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         talk = talk,
         main = main,
         skillLocked = {
-            session.activeSkill == ActiveSkill.NAV ||
-                session.activeSkill == ActiveSkill.MENU ||
-                session.activeSkill == ActiveSkill.COUPON ||
-                session.activeSkill == ActiveSkill.PAY ||
-                recommendedThisTurn ||
-                selectedThisTurn
+            session.surfaceLocked || recommendedThisTurn || selectedThisTurn
         },
         publish = { card, qa, status ->
             _ui.update { state ->
@@ -246,7 +242,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         StreamVision.onSample = { frame ->
             EnvironmentWatcher.ingest(frame)
             publishAgentContext()
-            if (session.activeSkill == ActiveSkill.NAV) {
+            if (session.navigating) {
                 maybeLandmarkNav(frame)
             } else {
                 maybeObserveScene(frame)
@@ -344,7 +340,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun refreshIndoorFromLook() {
-        if (session.activeSkill != ActiveSkill.NAV) return
+        if (!session.navigating) return
         if (indoor.landmarks.stage == LandmarkStage.OUTDOOR) return
         val store = session.currentStore ?: return
         val remaining = _ui.value.navHint?.remaining ?: 0
@@ -354,7 +350,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun maybeLandmarkNav(frame: StreamFrame) {
-        if (session.activeSkill != ActiveSkill.NAV) return
+        if (!session.navigating) return
         val store = session.currentStore ?: return
         if (!frame.extract.quality.ok && indoor.landmarks.stage == LandmarkStage.OUTDOOR) return
         val gpsHint = _ui.value.navHint
@@ -403,7 +399,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun ensureOutdoorRoute() {
-        if (session.activeSkill != ActiveSkill.NAV) return
+        if (!session.navigating) return
         if (indoor.landmarks.stage != LandmarkStage.OUTDOOR) return
         if (WalkGuide.current() != null) return
         val origin = PhoneGps.last ?: return
@@ -419,11 +415,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun maybeObserveScene(frame: StreamFrame) {
         if (talk.asking || capturing) return
-        when (session.activeSkill) {
-            ActiveSkill.NAV, ActiveSkill.MENU, ActiveSkill.COUPON, ActiveSkill.PAY -> return
-            else -> Unit
-        }
-        if (session.pendingPay != null || session.pendingCoupon != null) return
+        if (session.surfaceLocked) return
         if (!frame.extract.quality.ok) return
         val width = frame.extract.width
         val height = frame.extract.height
@@ -496,7 +488,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             }
             return
         }
-        if (session.activeSkill == ActiveSkill.NAV) {
+        if (session.navigating) {
             stopNavInternal(silent = true)
         }
         startCapture()
@@ -687,11 +679,11 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 recognizing = true,
                 status = shootSpeak(intent),
-                card = if (session.activeSkill == ActiveSkill.NAV) it.card else shooting,
+                card = if (session.navigating) it.card else shooting,
                 lastQa = QaResult("视觉", intent.name.lowercase(), shootSpeak(intent), shootSpeak(intent)),
             )
         }
-        if (session.activeSkill != ActiveSkill.NAV) {
+        if (!session.navigating) {
             CxrLinkHost.showCard(shooting)
         }
     }
@@ -705,11 +697,11 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(
                     recognizing = false,
                     status = reason,
-                    card = if (session.activeSkill == ActiveSkill.NAV) it.card else card,
+                    card = if (session.navigating) it.card else card,
                     lastQa = QaResult("视觉", "look", reason, reason),
                 )
             }
-            if (session.activeSkill != ActiveSkill.NAV) {
+            if (!session.navigating) {
                 CxrLinkHost.showCard(card)
             }
         }
@@ -853,7 +845,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             .put("text", text.take(120))
             .put("vision_route", outcome.reason)
             .put("vision_source", source)
-            .put("note", "路牌只作辅助，路线仍以 GPS 和高德为准")
+            .put("note", "路牌只作辅助，路线仍以 GPS 为准")
         if (text.isBlank()) {
             json.put("ok", false).put("error", "路牌看不清")
         }
@@ -874,7 +866,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }
         val menu = session.startMenu(items)
         val card = HudCard.fromMenu(session.currentStore?.shortName.orEmpty(), menu)
-        publishSkillCard(card, ActiveSkill.MENU, "这是${session.currentStore?.shortName}的菜单", "read_menu")
+        publishSkillCard(card, "这是${session.currentStore?.shortName}的菜单", "read_menu")
         return JSONObject()
             .put("ok", true)
             .put("store", session.currentStore?.shortName)
@@ -929,7 +921,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }
         session.preparePay(order)
         val card = HudCard.fromPayConfirm(order.storeName, order.amount, order.qrType)
-        publishSkillCard(card, ActiveSkill.PAY, "应付${order.amount}元，确认才付款", "checkout")
+        publishSkillCard(card, "应付${order.amount}元，确认才付款", "checkout")
         return JSONObject()
             .put("ok", true)
             .put("kind", "pay")
@@ -993,7 +985,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (picked == null) {
             val card = HudCard.fromCoupons(session.currentStore?.shortName.orEmpty(), session.lastCoupons)
-            publishSkillCard(card, ActiveSkill.COUPON, card.wait.ifBlank { "请选定一张券" }, "scan_coupon")
+            publishSkillCard(card, card.wait.ifBlank { "请选定一张券" }, "scan_coupon")
             return JSONObject()
                 .put("ok", true)
                 .put("kind", "coupon")
@@ -1008,7 +1000,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }
         session.prepareCoupon(picked.id)
         val card = HudCard.fromCoupons(session.currentStore?.shortName.orEmpty(), listOf(picked))
-        publishSkillCard(card, ActiveSkill.COUPON, "确认后才核销${picked.title}", "scan_coupon")
+        publishSkillCard(card, "确认后才核销${picked.title}", "scan_coupon")
         return JSONObject()
             .put("ok", true)
             .put("kind", "coupon")
@@ -1034,12 +1026,12 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }.take(8).toList()
     }
 
-    private fun publishSkillCard(card: HudCard, skill: ActiveSkill, status: String, intent: String) {
+    private fun publishSkillCard(card: HudCard, status: String, intent: String) {
         main.post {
             _ui.update {
                 it.copy(
                     card = card,
-                    skill = skill,
+                    navigating = session.navigating,
                     status = status,
                     recognizing = false,
                     match = session.lastMatch,
@@ -1057,7 +1049,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(
                     store = place,
                     storeCaption = caption,
-                    skill = ActiveSkill.BROWSE,
+                    navigating = false,
                     status = status,
                     recognizing = false,
                     match = session.lastMatch,
@@ -1089,7 +1081,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 lastQa = QaResult("看店识别", "look", summary, result.tts),
                 status = result.tts,
                 recognizing = false,
-                skill = ActiveSkill.BROWSE,
+                navigating = false,
                 navHint = null,
             )
         }
@@ -1166,7 +1158,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun navCard(): HudCard? {
         val hint = _ui.value.navHint ?: return null
-        if (session.activeSkill != ActiveSkill.NAV) return null
+        if (!session.navigating) return null
         return HudCard.fromNav(
             hint.storeName,
             hint.turn,
@@ -1184,15 +1176,11 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         return navCard()
             ?: session.pendingPay?.let { HudCard.fromPayConfirm(it.storeName, it.amount, it.qrType) }
             ?: session.pendingCoupon?.let { HudCard.fromCoupons(session.currentStore?.shortName.orEmpty(), listOf(it)) }
-            ?: if (session.activeSkill == ActiveSkill.COUPON) {
-                HudCard.fromCoupons(session.currentStore?.shortName.orEmpty(), session.lastCoupons)
-            } else {
-                null
+            ?: session.lastCoupons.takeIf { it.isNotEmpty() }?.let {
+                HudCard.fromCoupons(session.currentStore?.shortName.orEmpty(), it)
             }
-            ?: if (session.activeSkill == ActiveSkill.MENU) {
-                HudCard.fromMenu(session.currentStore?.shortName.orEmpty(), session.lastMenu)
-            } else {
-                null
+            ?: session.lastMenu.takeIf { it.isNotEmpty() }?.let {
+                HudCard.fromMenu(session.currentStore?.shortName.orEmpty(), it)
             }
             ?: currentMatch()?.let { HudCard.fromMatch(it) }
             ?: HudCard.idle()
@@ -1225,7 +1213,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             dest != null &&
             !LandmarkPlanner.gpsLooksIndoor(PhoneGps.lastAccuracyM, hasFix)
         if (outdoorFix && PhoneAi.amapKey.isBlank()) {
-            return "没配高德步行密钥，在 ai.env 写 AMAP_WEB_KEY"
+            return "没配步行路线密钥，在 ai.env 写 AMAP_WEB_KEY"
         }
         val route = if (origin != null && dest != null && PhoneAi.amapKey.isNotBlank()) {
             AmapWalking.fetch(origin, dest, store0.shortName, PhoneAi.amapKey)
@@ -1264,7 +1252,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         main.post {
             _ui.update {
                 it.copy(
-                    skill = ActiveSkill.NAV,
+                    navigating = true,
                     navHint = hint,
                     card = card,
                     match = session.lastMatch,
@@ -1279,9 +1267,19 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         return null
     }
 
+    private fun dismissSurface(reason: DismissReason, silent: Boolean = true) {
+        val wasNav = session.navigating
+        session.dismiss(reason)
+        if (wasNav) {
+            releaseNavHardware(silent)
+        }
+    }
+
     private fun stopNavInternal(silent: Boolean) {
-        val wasNav = session.activeSkill == ActiveSkill.NAV
-        session.stopNav()
+        dismissSurface(DismissReason.STOP_NAV, silent)
+    }
+
+    private fun releaseNavHardware(silent: Boolean) {
         PhoneGps.onUpdate = null
         WalkGuide.clear()
         announcedArrive = false
@@ -1291,20 +1289,17 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             NavLocationService.stop(getApplication())
         } catch (_: Exception) {
         }
-        if (wasNav) {
-            CxrLinkHost.stopNav()
-        }
+        CxrLinkHost.stopNav()
         val place = currentMatch()?.let { displayPlace(it) }
         val card = if (place == null) HudCard.idle() else _ui.value.card
-        val skill = session.activeSkill
         main.post {
             _ui.update {
                 it.copy(
-                    skill = skill,
+                    navigating = false,
                     navHint = null,
                     store = place ?: it.store,
                     card = card,
-                    status = if (wasNav) "导航停了" else it.status,
+                    status = "导航停了",
                 )
             }
             if (place != null) {
@@ -1314,13 +1309,13 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 CxrLinkHost.showCard(card)
             }
         }
-        if (wasNav && !silent) {
+        if (!silent) {
             PhoneTts.speak("导航停了", SpeechPriority.NAV)
         }
     }
 
     private fun onGps(point: GeoPoint) {
-        if (session.activeSkill != ActiveSkill.NAV) return
+        if (!session.navigating) return
         viewModelScope.launch(Dispatchers.IO) {
             maybeReroute(point)
             val hint = WalkGuide.update(point) ?: return@launch
@@ -1351,13 +1346,13 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun publishNavHint(hint: NavHint) {
-        if (session.activeSkill != ActiveSkill.NAV) return
+        if (!session.navigating) return
         val card = navHud(hint)
         _ui.update {
             it.copy(
                 navHint = hint,
                 card = card,
-                skill = ActiveSkill.NAV,
+                navigating = true,
                 status = hint.text,
             )
         }
@@ -1403,7 +1398,6 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         val disambiguation = session.candidates.map { PlaceResolver.fromStore(it).ref }
         val search = cachedPlaces.filter { place -> disambiguation.none { it.id == place.id } }
         return WorldContext(
-            skill = session.activeSkill.name.lowercase(),
             boundPlace = bound?.ref,
             boundProfile = bound,
             disambiguation = disambiguation,
@@ -1418,7 +1412,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             pendingCoupon = session.pendingCoupon?.title.orEmpty(),
             spokenFloor = spokenFloor,
             environment = env,
-            navActive = session.activeSkill == ActiveSkill.NAV,
+            navActive = session.navigating,
             modelReady = PhoneAi.ready,
             capabilities = listOf("问答", "看环境", "搜附近", "导航", "到餐增强", "演示支付"),
             navArrived = _ui.value.navHint?.turn == "arrive",
@@ -1455,8 +1449,11 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }
         override fun startNav(spoken: String): String? = startNavInternal(spoken)
         override fun stopNav(silent: Boolean) = stopNavInternal(silent)
-        override fun publishSkillCard(card: HudCard, skill: ActiveSkill, status: String, intent: String) {
-            this@DiningViewModel.publishSkillCard(card, skill, status, intent)
+        override fun dismiss(reason: DismissReason) {
+            this@DiningViewModel.dismissSurface(reason)
+        }
+        override fun publishSkillCard(card: HudCard, status: String, intent: String) {
+            this@DiningViewModel.publishSkillCard(card, status, intent)
         }
         override fun publishMatch(result: MatchResult, source: String) {
             this@DiningViewModel.publishMatch(result, source)
