@@ -722,7 +722,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 return failCapture(streamError)
             }
             val stores = session.catalog.stores()
-            val observe = SceneVision.observe(intent, stores, spatial, "stream") {
+            val observe = SceneVision.observe(intent, stores, spatial, "live", useCache = false) {
                 grabVisionJpeg()
             }
             main.post { _ui.update { it.copy(photo = observe.bitmap, recognizing = false) } }
@@ -734,7 +734,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             }
             val jpeg = observe.jpeg
             val outcome = observe.outcome
-            Log.i(TAG, "vision source=stream intent=$intent decision=${outcome.decision} route=${outcome.reason}")
+            Log.i(TAG, "vision source=live intent=$intent decision=${outcome.decision} route=${outcome.reason}")
             return when (intent) {
                 VisionIntent.CHECKOUT -> finishCheckoutScan(outcome, "stream")
                 VisionIntent.SCAN_COUPON -> finishScanCoupon(jpeg, outcome, "stream")
@@ -782,14 +782,18 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun grabVisionJpeg(): Pair<ByteArray?, String?> {
+        val jpeg = PhoneRtc.grabJpeg(2_500)
+        if (jpeg != null) {
+            Log.i(TAG, "vision grab live bytes=${jpeg.size}")
+            return jpeg to null
+        }
         val cached = StreamVision.latestJpeg()
         if (cached != null) {
-            Log.i(TAG, "vision grab cache bytes=${cached.size}")
+            Log.i(TAG, "vision grab cache fallback bytes=${cached.size}")
             return cached to null
         }
-        val jpeg = PhoneRtc.grabJpeg(2_500)
-        Log.i(TAG, "vision grab live bytes=${jpeg?.size ?: 0}")
-        return jpeg to if (jpeg == null) "视频流还没出画，请对准再试" else null
+        Log.i(TAG, "vision grab live bytes=0")
+        return null to "视频流还没出画，请对准再试"
     }
 
     private fun finishLookStore(jpeg: ByteArray, outcome: VisionOutcome, source: String): String {
@@ -808,8 +812,18 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                     .toString()
             }
         }
-        val vision = if (outcome.needsLlm && PhoneAi.ready) {
-            PhoneAi.look(VisionRouter.bytesForLlm(jpeg, outcome), "look_store", outcome.ocrText)
+        val vision = if (outcome.needsLlm) {
+            if (!PhoneAi.ready) {
+                return JSONObject()
+                    .put("ok", false)
+                    .put("error", "视觉模型还没配好")
+                    .put("ocr", outcome.ocrText.take(80))
+                    .put("observation", !visionBindStore)
+                    .put("is_store_fact", false)
+                    .toString()
+            }
+            val task = if (visionBindStore) "look_store" else "look_scene"
+            PhoneAi.look(VisionRouter.bytesForLlm(jpeg, outcome), task, outcome.ocrText)
         } else {
             null
         }
@@ -835,7 +849,10 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun finishSign(jpeg: ByteArray, outcome: VisionOutcome, source: String): String {
-        val text = if (outcome.needsLlm && PhoneAi.ready) {
+        val text = if (outcome.needsLlm) {
+            if (!PhoneAi.ready) {
+                return JSONObject().put("ok", false).put("error", "视觉模型还没配好").toString()
+            }
             PhoneAi.look(VisionRouter.bytesForLlm(jpeg, outcome), "read_sign", outcome.ocrText).speak
         } else {
             outcome.ocrText.ifBlank { outcome.fastSpeak }.orEmpty()
@@ -856,11 +873,14 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         if (session.currentStore == null) {
             return JSONObject().put("ok", false).put("error", "还没确认门店，不能当事实读菜单").toString()
         }
-        val items = if (outcome.decision == VisionDecision.TEXT_ONLY && outcome.ocrText.isNotBlank()) {
-            parseMenuItems(outcome.ocrText).ifEmpty { MockCommerce.menuOf(session.currentStore) }
-        } else if (outcome.needsLlm && PhoneAi.ready) {
+        val items = if (outcome.needsLlm) {
+            if (!PhoneAi.ready) {
+                return JSONObject().put("ok", false).put("error", "视觉模型还没配好").toString()
+            }
             val vision = PhoneAi.look(VisionRouter.bytesForLlm(jpeg, outcome), "read_menu", outcome.ocrText)
             parseMenuItems(vision.speak + "\n" + outcome.ocrText).ifEmpty { MockCommerce.menuOf(session.currentStore) }
+        } else if (outcome.decision == VisionDecision.TEXT_ONLY && outcome.ocrText.isNotBlank()) {
+            parseMenuItems(outcome.ocrText).ifEmpty { MockCommerce.menuOf(session.currentStore) }
         } else {
             MockCommerce.menuOf(session.currentStore)
         }

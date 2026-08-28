@@ -41,7 +41,7 @@ class VisionPolicyTest {
     }
 
     @Test
-    fun uniqueStoreOcrIsTextOnly() {
+    fun uniqueStoreOcrStillUploads() {
         val names = listOf("青田小馆火锅", "临河茶铺")
         repeat(30) { index ->
             val name = names[index % names.size]
@@ -51,8 +51,7 @@ class VisionPolicyTest {
                 extract(ocr = name),
                 ranked,
             )
-            assertEquals("case $index $name", VisionDecision.TEXT_ONLY, outcome.decision)
-            assertFalse(outcome.needsLlm)
+            assertEquals("case $index $name", true, outcome.needsLlm)
             assertTrue(outcome.matchedStoreId.orEmpty().isNotBlank())
         }
     }
@@ -115,23 +114,22 @@ class VisionPolicyTest {
                 extract(ocr = hint),
                 ranked,
             )
-            assertEquals(hint, VisionDecision.TEXT_ONLY, outcome.decision)
+            assertTrue(hint, outcome.needsLlm)
             assertEquals(hint, "B0IAOZ0H2D", outcome.matchedStoreId)
             assertEquals(hint, "B0IAOZ0H2D", StoreVision.matchStore(catalog, hint)?.id)
         }
     }
 
     @Test
-    fun uniqueStoreNameIsTextOnly() {
+    fun uniqueStoreNameStillUploads() {
         val ranked = StoreVision.rankStores(stores, "青田小馆火锅朝阳店")
         val outcome = VisionPolicy.decide(
             VisionIntent.LOOK_STORE,
             extract(ocr = "青田小馆火锅"),
             ranked,
         )
-        assertEquals(VisionDecision.TEXT_ONLY, outcome.decision)
+        assertTrue(outcome.needsLlm)
         assertEquals("store_hotpot", outcome.matchedStoreId)
-        assertFalse(outcome.needsLlm)
     }
 
     @Test
@@ -165,7 +163,7 @@ class VisionPolicyTest {
     }
 
     @Test
-    fun menuWithPricesIsTextOnly() {
+    fun menuWithPricesStillUploads() {
         repeat(30) { index ->
             val text = "番茄锅¥${68 + index}\n滑牛肉¥${48 + index}\n米饭 3元"
             val outcome = VisionPolicy.decide(
@@ -173,7 +171,7 @@ class VisionPolicyTest {
                 extract(ocr = text),
                 emptyList(),
             )
-            assertEquals("case $index", VisionDecision.TEXT_ONLY, outcome.decision)
+            assertTrue("case $index", outcome.needsLlm)
             assertEquals(VisionScene.MENU, outcome.scene)
         }
     }
@@ -191,7 +189,7 @@ class VisionPolicyTest {
     }
 
     @Test
-    fun streetSignWithEnoughTextIsTextOnly() {
+    fun streetSignWithEnoughTextStillUploads() {
         repeat(30) { index ->
             val text = "工体北路步行入口$index"
             val outcome = VisionPolicy.decide(
@@ -199,8 +197,7 @@ class VisionPolicyTest {
                 extract(ocr = text),
                 emptyList(),
             )
-            assertEquals(VisionDecision.TEXT_ONLY, outcome.decision)
-            assertFalse(outcome.needsLlm)
+            assertTrue("case $index", outcome.needsLlm)
         }
     }
 
@@ -265,8 +262,8 @@ class VisionPolicyTest {
         val menu = VisionPolicy.decide(VisionSkill.intentForTool("look_at_scene", "menu")!!, frame, ranked)
         val coupon = VisionPolicy.decide(VisionSkill.intentForTool(VisionSkill.SCAN_COUPON)!!, frame, ranked)
         val checkout = VisionPolicy.decide(VisionSkill.intentForTool(VisionSkill.CHECKOUT)!!, frame, ranked)
-        assertEquals(VisionDecision.TEXT_ONLY, lookStore.decision)
-        assertEquals(VisionDecision.TEXT_ONLY, observe.decision)
+        assertTrue(lookStore.needsLlm)
+        assertTrue(observe.needsLlm)
         assertTrue(menu.needsLlm)
         assertTrue(coupon.needsLlm)
         assertEquals(VisionDecision.RECAPTURE, checkout.decision)

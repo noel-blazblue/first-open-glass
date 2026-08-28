@@ -145,6 +145,7 @@ object PhoneAi {
                 "read_menu" -> append("这是菜单，抽出菜名和价格，不要编造没有的菜。")
                 "read_sign" -> append("这是路牌或入口，只读看到的字，不要判断能不能过马路。")
                 "scan_coupon" -> append("这是团购券或券码，只读标题和是否像可用券，不要输出完整券码，不要说已经核销。")
+                "look_scene" -> append("描述这一眼看到什么。OCR只是参考，不要当结论。不确定就描述，不要猜品牌。不要把观察说成已确认门店。")
                 else -> append("读出眼前看到的标识。不确定就描述，不要猜品牌。黄色横幅和广告不是店。")
             }
             if (ocrText.isNotBlank()) {
@@ -160,7 +161,7 @@ object PhoneAi {
                         "image_url",
                         JSONObject()
                             .put("url", "data:image/jpeg;base64,$b64")
-                            .put("detail", if (task == "look_store") "high" else "low"),
+                            .put("detail", if (task == "look_store" || task == "look_scene") "high" else "low"),
                     ),
             )
         val messages = JSONArray()

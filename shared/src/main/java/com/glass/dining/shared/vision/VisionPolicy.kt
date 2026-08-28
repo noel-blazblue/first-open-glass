@@ -153,29 +153,20 @@ object VisionPolicy {
         unique: Boolean,
         scene: VisionScene,
     ): VisionOutcome {
-        val top = ranked.firstOrNull()
-        if (unique && top != null) {
-            return VisionOutcome(
-                intent = VisionIntent.LOOK_STORE,
-                scene = scene,
-                decision = VisionDecision.TEXT_ONLY,
-                reason = "ocr_unique_store",
-                ocrText = extract.ocrText,
-                ocr = extract.ocr,
-                matchedStoreId = top.store.id,
-                matchedStoreName = top.store.shortName,
-                candidateNames = ranked.take(3).map { it.store.shortName },
-                roi = roiOf(extract, top.key),
-                fastSpeak = top.store.shortName,
-            )
+        val reason = when {
+            unique -> "live_vision"
+            ranked.size >= 2 -> "live_vision_ambiguous"
+            extract.ocrText.length >= 2 -> "live_vision_ocr_hint"
+            else -> "live_vision_no_text"
         }
-        if (ranked.size >= 2) {
-            return upload(VisionIntent.LOOK_STORE, extract, ranked, scene, "多家店分数接近", preferRoi = true)
-        }
-        if (extract.ocrText.length >= 2) {
-            return upload(VisionIntent.LOOK_STORE, extract, ranked, scene, "店招有字但没唯一匹配", preferRoi = true)
-        }
-        return upload(VisionIntent.LOOK_STORE, extract, ranked, VisionScene.UNKNOWN, "店招无字或艺术字", preferRoi = false)
+        return upload(
+            VisionIntent.LOOK_STORE,
+            extract,
+            ranked,
+            if (extract.ocrText.isNotBlank()) scene else VisionScene.UNKNOWN,
+            reason,
+            preferRoi = unique || ranked.isNotEmpty(),
+        )
     }
 
     private fun readSign(
@@ -184,35 +175,14 @@ object VisionPolicy {
         unique: Boolean,
         scene: VisionScene,
     ): VisionOutcome {
-        val top = ranked.firstOrNull()
-        if (unique && top != null) {
-            return VisionOutcome(
-                intent = VisionIntent.READ_SIGN,
-                scene = scene,
-                decision = VisionDecision.TEXT_ONLY,
-                reason = "sign_unique_store",
-                ocrText = extract.ocrText,
-                ocr = extract.ocr,
-                matchedStoreId = top.store.id,
-                matchedStoreName = top.store.shortName,
-                candidateNames = ranked.take(3).map { it.store.shortName },
-                roi = roiOf(extract, top.key),
-                fastSpeak = extract.ocrText.take(40).ifBlank { top.store.shortName },
-            )
-        }
-        if (extract.ocrText.replace("\\s".toRegex(), "").length >= SIGN_MIN_CHARS) {
-            return VisionOutcome(
-                intent = VisionIntent.READ_SIGN,
-                scene = VisionScene.STREET_SIGN,
-                decision = VisionDecision.TEXT_ONLY,
-                reason = "sign_ocr_enough",
-                ocrText = extract.ocrText,
-                ocr = extract.ocr,
-                candidateNames = ranked.take(3).map { it.store.shortName },
-                fastSpeak = extract.ocrText.take(40),
-            )
-        }
-        return upload(VisionIntent.READ_SIGN, extract, ranked, scene, "路牌字太少", preferRoi = false)
+        return upload(
+            VisionIntent.READ_SIGN,
+            extract,
+            ranked,
+            scene,
+            if (unique) "live_vision" else "live_vision_sign",
+            preferRoi = unique,
+        )
     }
 
     private fun readMenu(
@@ -220,21 +190,7 @@ object VisionPolicy {
         ranked: List<ScoredStore>,
         scene: VisionScene,
     ): VisionOutcome {
-        if (menuLooksComplete(extract.ocrText)) {
-            return VisionOutcome(
-                intent = VisionIntent.READ_MENU,
-                scene = VisionScene.MENU,
-                decision = VisionDecision.TEXT_ONLY,
-                reason = "menu_ocr_priced",
-                ocrText = extract.ocrText,
-                ocr = extract.ocr,
-                matchedStoreId = ranked.firstOrNull()?.store?.id,
-                matchedStoreName = ranked.firstOrNull()?.store?.shortName,
-                candidateNames = ranked.take(3).map { it.store.shortName },
-                fastSpeak = extract.ocrText.lineSequence().firstOrNull().orEmpty().take(20),
-            )
-        }
-        return upload(VisionIntent.READ_MENU, extract, ranked, VisionScene.MENU, "菜单排版不完整", preferRoi = false)
+        return upload(VisionIntent.READ_MENU, extract, ranked, scene, "live_vision_menu", preferRoi = false)
     }
 
     private fun scanCoupon(

@@ -29,7 +29,8 @@ class ScenarioContractTest {
         val prompt = AgentPrompts.BASE
         assertTrue(prompt.contains("【现实环境与视觉问答】"))
         assertTrue(prompt.contains("眼前"))
-        assertTrue(prompt.contains("look_at_scene"))
+        assertTrue(prompt.contains("必须 look_at_scene"))
+        assertTrue(prompt.contains("不要用【当前视野】"))
         assertFalse(AgentToolCatalog.LOOK_AT_SCENE.description.contains("回答周围有什么"))
         assertTrue(AgentToolCatalog.LOOK_AT_SCENE.description.contains("不要用此工具搜附近地点"))
     }
@@ -106,12 +107,12 @@ class ScenarioContractTest {
     }
 
     @Test
-    fun floorAskUsesVision() {
+    fun floorAskUsesLocationNotVision() {
         val out = runStub(
             user = "我在几楼",
             world = WorldContext(catalogCount = 0),
         )
-        assertTrue(out.tools == listOf("look_at_scene"))
+        assertTrue(out.tools.isEmpty())
     }
 
     private fun assertEqualsKeyword(actual: String, expected: String) {
@@ -128,7 +129,7 @@ class ScenarioContractTest {
         val prompt = AgentPrompts.BASE + "\n" + AgentContextAssembler.format(world)
         assertTrue(prompt.contains("【到店美食与餐饮探索】"))
         return when {
-            user.contains("眼前") || user.contains("几楼") ->
+            user.contains("眼前") || user.contains("看一下") ->
                 StubTrace(listOf("look_at_scene"))
             user.contains("药店") ->
                 StubTrace(listOf("search_nearby_places"), "药店")

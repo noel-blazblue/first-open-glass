@@ -1,13 +1,8 @@
 package com.glass.dining.phone.tools
 
-import android.os.SystemClock
-import com.glass.dining.phone.agent.EnvironmentWatcher
 import com.glass.dining.phone.agent.PhoneWorld
-import com.glass.dining.phone.vision.StreamVision
 import com.glass.dining.shared.agent.AgentToolCatalog
-import com.glass.dining.shared.agent.EnvironmentStore
 import com.glass.dining.shared.agent.EvidenceGate
-import com.glass.dining.shared.agent.FloorQueryPolicy
 import com.glass.dining.shared.agent.SceneObservation
 import com.glass.dining.shared.catalog.StoreVision
 import com.glass.dining.shared.vision.VisionIntent
@@ -20,73 +15,21 @@ class VisionToolProvider(private val world: PhoneWorld) {
     }
 
     private fun look(args: JSONObject): String {
-        val purpose = args.optString("purpose").ifBlank {
-            if (world.session.navigating) "observe" else "observe"
-        }
+        val purpose = args.optString("purpose").ifBlank { "observe" }
         return when (purpose) {
-            "store" -> lookStore(args)
+            "store" -> lookStore()
             "menu" -> world.capture(VisionIntent.READ_MENU)
             else -> {
                 if (world.session.navigating) {
                     world.capture(VisionIntent.READ_SIGN, spatial = true)
                 } else {
-                    lookAtScene(args)
+                    lookAtScene()
                 }
             }
         }
     }
 
-    @Suppress("UNUSED_PARAMETER")
-    private fun lookAtScene(args: JSONObject): String {
-        val env = EnvironmentStore.snapshot()
-        val now = SystemClock.elapsedRealtime()
-        val reason = args.optString("reason")
-        val askingFloor = FloorQueryPolicy.isFloorAsk(world.question) ||
-            FloorQueryPolicy.isFloorAsk(reason) ||
-            reason.contains("floor")
-        if (askingFloor) {
-            FloorQueryPolicy.resolve(env)?.let { answer ->
-                return JSONObject()
-                    .put("ok", true)
-                    .put("observation", true)
-                    .put("environment", true)
-                    .put("floor", answer.floor)
-                    .put("floor_source", answer.source)
-                    .put("is_store_fact", false)
-                    .put("message", answer.speak)
-                    .put("hint", "楼层来自用户确认或近期楼层标识，不是当前画面猜测")
-                    .toString()
-            }
-            EnvironmentWatcher.requestFresh(StreamVision.latestFrame(8_000))
-        } else if (env.stale(now) || EnvironmentWatcher.shouldRefresh()) {
-            EnvironmentWatcher.requestFresh(StreamVision.latestFrame(8_000))
-        }
-        if (env.hasUsable) {
-            return JSONObject()
-                .put("ok", true)
-                .put("observation", true)
-                .put("environment", true)
-                .put("floor", env.usableFloor)
-                .put("is_store_fact", false)
-                .put("message", env.currentBrief.ifBlank { "眼前环境已有记录，不是门店事实。" })
-                .put("hint", "环境记忆不是门店事实")
-                .toString()
-        }
-        val obs = world.observation
-        if (obs != null && obs.stability >= 1 && obs.scene != "unknown") {
-            return JSONObject()
-                .put("ok", true)
-                .put("observation", true)
-                .put("scene", obs.scene)
-                .put("visible_text", obs.visibleText)
-                .put("confidence", obs.confidence.toDouble())
-                .put("store_candidate", obs.storeCandidate)
-                .put("is_store_fact", obs.isStoreFact)
-                .put("label", obs.label)
-                .put("message", speakObservation(obs.scene, obs.visibleText, obs.storeCandidate, obs.isStoreFact))
-                .put("hint", "观察不是事实，不要绑定门店")
-                .toString()
-        }
+    private fun lookAtScene(): String {
         val captured = world.capture(VisionIntent.LOOK_STORE, bindStore = false)
         val json = try {
             JSONObject(captured)
@@ -94,15 +37,18 @@ class VisionToolProvider(private val world: PhoneWorld) {
             JSONObject().put("ok", false).put("message", captured)
         }
         json.put("observation", true)
-        json.put("is_store_fact", json.optBoolean("matched", false))
+        json.put("is_store_fact", false)
+        json.put("matched", false)
         if (!json.has("message")) {
             json.put("message", json.optString("vision").ifBlank { "我看了眼前，还不能确定。" })
+        }
+        if (!json.has("hint")) {
+            json.put("hint", "这是这一眼的观察，不是已确认门店")
         }
         return json.toString()
     }
 
-    @Suppress("UNUSED_PARAMETER")
-    private fun lookStore(args: JSONObject): String {
+    private fun lookStore(): String {
         val captured = world.capture(VisionIntent.LOOK_STORE, bindStore = true)
         val json = try {
             JSONObject(captured)
@@ -118,8 +64,7 @@ class VisionToolProvider(private val world: PhoneWorld) {
                 source = EvidenceGate.BindSource.OBSERVATION,
                 placeId = catalog?.id.orEmpty(),
                 name = seen,
-                observation = world.observation ?: SceneObservation(
-                    scene = "storefront",
+                observation = SceneObservation(
                     visibleText = seen,
                     storeCandidate = seen,
                     stability = 2,
@@ -145,18 +90,5 @@ class VisionToolProvider(private val world: PhoneWorld) {
         json.put("matched", false).put("is_store_fact", false)
             .put("hint", "这是观察，不是已确认门店")
         return json.toString()
-    }
-
-    private fun speakObservation(scene: String, text: String, candidate: String, fact: Boolean): String {
-        if (fact && candidate.isNotBlank()) return "眼前是$candidate。"
-        val seen = text.take(16).ifBlank { candidate }
-        return when (scene) {
-            "banner" -> "这是一条横幅或标识，还不能确定是店。"
-            "billboard" -> "这更像广告牌。"
-            "street_sign" -> "这是路牌或警示。"
-            "keyboard" -> "画面里主要是键盘或屏幕，不像店招。"
-            "building" -> if (seen.isBlank()) "这是普通建筑，我还认不出名字。" else "画面上有「$seen」。"
-            else -> if (seen.isBlank()) "眼前有标识，还不能确定是哪家。" else "画面上像是「$seen」，还不能确定就是这家店。"
-        }
     }
 }

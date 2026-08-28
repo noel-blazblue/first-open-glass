@@ -213,7 +213,7 @@ object DegradedPlanner {
     }
 
     private fun isLook(text: String): Boolean {
-        return listOf("这是什么", "前面是什么", "那是什么", "看一下", "眼前", "几楼", "哪一层", "楼层").any { text.contains(it) }
+        return listOf("这是什么", "前面是什么", "那是什么", "看一下", "眼前").any { text.contains(it) }
     }
 
     private fun isPayConfirm(text: String): Boolean {

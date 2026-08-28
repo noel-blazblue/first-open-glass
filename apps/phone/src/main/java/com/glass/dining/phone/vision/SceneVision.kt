@@ -17,8 +17,8 @@ data class VisionObserve(
 )
 
 /**
- * 到餐 Agent 的通用视觉能力：会话抽帧 → 端侧路由 → 必要时再给多模态。
- * 认店、路牌、菜单、券、支付都走这里。
+ * 到餐 Agent 的通用视觉能力：会话抽帧 → 端侧路由 → 用户主动看则上视觉模型。
+ * 认店、路牌、菜单、券、支付都走这里。后台环境检测不走这里。
  */
 object SceneVision {
     private const val TAG = "GlassDiningPhone"
@@ -28,17 +28,20 @@ object SceneVision {
         stores: List<Store>,
         spatial: Boolean = false,
         source: String,
+        useCache: Boolean = true,
         grab: (attempt: Int) -> Pair<ByteArray?, String?>,
     ): VisionObserve {
-        StreamVision.latestFrame()?.let { cached ->
-            val outcome = VisionRouter.decide(intent, cached.extract, stores, spatial)
-            Log.i(
-                TAG,
-                "vision cache intent=$intent decision=${outcome.decision} scene=${outcome.scene} " +
-                    "ocr=${cached.extract.ocrText.length} qr=${cached.extract.barcodes.isNotEmpty()}",
-            )
-            if (!outcome.needsRecapture) {
-                return VisionObserve(cached.jpeg, cached.bitmap, outcome, source)
+        if (useCache) {
+            StreamVision.latestFrame()?.let { cached ->
+                val outcome = VisionRouter.decide(intent, cached.extract, stores, spatial)
+                Log.i(
+                    TAG,
+                    "vision cache intent=$intent decision=${outcome.decision} scene=${outcome.scene} " +
+                        "ocr=${cached.extract.ocrText.length} qr=${cached.extract.barcodes.isNotEmpty()}",
+                )
+                if (!outcome.needsRecapture) {
+                    return VisionObserve(cached.jpeg, cached.bitmap, outcome, source)
+                }
             }
         }
         var lastJpeg = ByteArray(0)
