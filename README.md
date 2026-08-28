@@ -14,7 +14,7 @@
 | --- | --- |
 | 手机 `apps/phone` | 主应用。乐奇授权、`CXRLink`、到餐 Agent、TTS、真 GPS 导航 |
 | 门店 `apps/store` | 线下录入店名和经纬度，随时改 JSON |
-| 共享 `shared` | 门店模型、目录 JSON、匹配、绿字 `HudCard` |
+| 共享 `shared` | Agent 协议、`place/` 地点句柄与资料、目录 JSON、匹配 |
 | 眼镜 `apps/glass-nav` | CustomApp HUD |
 | `apps/glass` | 归档的企业/裸机实验 |
 

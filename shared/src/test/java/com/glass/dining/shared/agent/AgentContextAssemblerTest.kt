@@ -1,5 +1,6 @@
 package com.glass.dining.shared.agent
 
+import com.glass.dining.shared.place.PlaceRef
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -40,6 +41,40 @@ class AgentContextAssemblerTest {
         assertTrue(text.contains("当前查看门店"))
         assertTrue(text.contains("不是用户当前位置"))
         assertFalse(text.contains("当前地点"))
+        assertFalse(text.contains("【门店资料】"))
+    }
+
+    @Test
+    fun boundAmapPlaceExposesAnswerableFacts() {
+        val text = AgentContextAssembler.format(
+            WorldContext(
+                skill = "browse",
+                boundPlace = PlaceRef(
+                    id = "B0HGUAEBKL",
+                    name = "潮黄记·潮汕鲜牛肉火锅(望京店)",
+                    address = "望京东园1区120号楼",
+                    floor = "2F",
+                ),
+                boundProfile = PlaceRef(
+                    id = "B0HGUAEBKL",
+                    name = "潮黄记·潮汕鲜牛肉火锅(望京店)",
+                    address = "望京东园1区120号楼",
+                    floor = "2F",
+                ).asProfile(
+                    rating = 4.7,
+                    avgCost = 152,
+                    tel = "13581699848",
+                    hoursToday = "11:00-23:00",
+                    businessArea = "望京",
+                ),
+            ),
+        )
+        assertTrue(text.contains("【门店资料】"))
+        assertTrue(text.contains("评分=4.7"))
+        assertTrue(text.contains("人均=152"))
+        assertTrue(text.contains("营业时间=11:00-23:00"))
+        assertTrue(text.contains("电话=13581699848"))
+        assertTrue(text.contains("楼层=2F"))
     }
 
     @Test
@@ -82,7 +117,7 @@ class AgentContextAssemblerTest {
         val text = AgentContextAssembler.format(
             WorldContext(
                 disambiguation = listOf(place("海底捞(西湖店)", "a")),
-                recentSearch = listOf(place("药店", "b"), place("银行", "c")),
+                recentSearch = listOf(place("药店", "b").asProfile(), place("银行", "c").asProfile()),
             ),
         )
         assertTrue(text.contains("【待选择地点】海底捞(西湖店)"))
@@ -194,6 +229,7 @@ class AgentContextAssemblerTest {
         assertTrue(debug.contains("skill=nav"))
         assertTrue(debug.contains("catalog=12"))
         assertTrue(debug.contains("catalog"))
+        assertTrue(model.contains("【本地目录】餐饮增强数据 12 家，可 recommend"))
     }
 
     @Test

@@ -1,18 +1,18 @@
-package com.glass.dining.shared.agent
+package com.glass.dining.shared.place
 
 import com.glass.dining.shared.model.MatchResult
 import com.glass.dining.shared.model.Store
 
 sealed class DestinationResolve {
-    data class Unique(val place: PlaceRef) : DestinationResolve()
-    data class Ambiguous(val candidates: List<PlaceRef>) : DestinationResolve()
+    data class Unique(val place: PlaceProfile) : DestinationResolve()
+    data class Ambiguous(val candidates: List<PlaceProfile>) : DestinationResolve()
     data class NotFound(val query: String, val reason: String) : DestinationResolve()
     data class NeedLocation(val query: String) : DestinationResolve()
 }
 
 object PlaceResolver {
-    fun fromStore(store: Store): PlaceRef {
-        return PlaceRef(
+    fun fromStore(store: Store): PlaceProfile {
+        val ref = PlaceRef(
             id = store.id,
             name = store.shortName.ifBlank { store.name },
             address = store.address,
@@ -24,26 +24,39 @@ object PlaceResolver {
             floor = store.floor,
             category = store.category,
         )
+        return PlaceProfile(
+            ref = ref,
+            rating = store.rating,
+            avgCost = store.avgPrice,
+            tel = store.phone,
+            hoursToday = store.hours,
+            businessArea = store.businessArea,
+            tag = store.tags.joinToString(","),
+            keytag = store.category,
+        )
     }
 
-    fun toStore(place: PlaceRef): Store {
+    fun toStore(place: PlaceRef): Store = toStore(PlaceProfile(place))
+
+    fun toStore(place: PlaceProfile): Store {
         val catalog = place.catalogBacked
+        val tags = place.tag.split(",", "、").map { it.trim() }.filter { it.isNotBlank() }
         return Store(
             id = place.storeId.ifBlank { place.id },
             name = place.name,
-            shortName = place.name.take(12),
-            category = place.category,
-            rating = 0.0,
+            shortName = place.name.take(16),
+            category = place.keytag.ifBlank { place.category },
+            rating = place.rating,
             reviewCount = 0,
-            avgPrice = 0,
+            avgPrice = place.avgCost,
             distanceMeters = place.distanceMeters,
-            openNow = true,
-            hours = "",
-            phone = "",
+            openNow = catalog,
+            hours = place.hours,
+            phone = place.tel,
             address = place.address,
             waitTables = 0,
             waitMinutes = 0,
-            tags = emptyList(),
+            tags = tags,
             deals = emptyList(),
             signatures = emptyList(),
             suitable = emptyList(),
@@ -54,10 +67,11 @@ object PlaceResolver {
             floor = place.floor,
             source = place.source,
             catalogBacked = catalog,
+            businessArea = place.businessArea,
         )
     }
 
-    fun matchResult(place: PlaceRef, others: List<PlaceRef> = emptyList()): MatchResult {
+    fun matchResult(place: PlaceProfile, others: List<PlaceProfile> = emptyList()): MatchResult {
         val store = toStore(place)
         val candidates = (listOf(place) + others).distinctBy { it.id }.map { toStore(it) }
         val dist = if (place.distanceMeters > 0) "大约${place.distanceMeters}米。" else ""
@@ -69,10 +83,10 @@ object PlaceResolver {
         return MatchResult(store, candidates, tts, 0.8f, place.source)
     }
 
-    fun merge(catalog: List<Store>, pois: List<PlaceRef>): List<PlaceRef> {
+    fun merge(catalog: List<Store>, pois: List<PlaceProfile>): List<PlaceProfile> {
         val local = catalog.map { fromStore(it) }
         val used = mutableSetOf<String>()
-        val out = ArrayList<PlaceRef>()
+        val out = ArrayList<PlaceProfile>()
         for (store in local) {
             val poi = pois.firstOrNull { samePlace(store, it) }
             out.add(overlay(store, poi))
@@ -81,16 +95,16 @@ object PlaceResolver {
         for (poi in pois) {
             if (poi.id in used) continue
             if (out.any { samePlace(it, poi) }) continue
-            out.add(poi.copy(source = PlaceRef.SOURCE_AMAP))
+            out.add(poi.copy(ref = poi.ref.copy(source = PlaceRef.SOURCE_AMAP)))
         }
         return out.sortedBy { if (it.distanceMeters > 0) it.distanceMeters else Int.MAX_VALUE }
     }
 
     fun resolve(
         query: String,
-        sessionPlace: PlaceRef?,
+        sessionPlace: PlaceProfile?,
         catalog: List<Store>,
-        nearby: List<PlaceRef>,
+        nearby: List<PlaceProfile>,
         hasLocation: Boolean = true,
         searchAttempted: Boolean = false,
         searchError: String = "",
@@ -119,28 +133,40 @@ object PlaceResolver {
         return DestinationResolve.NotFound(q, "附近没有找到$q")
     }
 
-    private fun overlay(local: PlaceRef, poi: PlaceRef?): PlaceRef {
+    private fun overlay(local: PlaceProfile, poi: PlaceProfile?): PlaceProfile {
         if (poi == null) return local
         val lat = if (local.hasCoords) local.lat else poi.lat
         val lng = if (local.hasCoords) local.lng else poi.lng
         val address = local.address.ifBlank { poi.address }
         val distance = if (local.distanceMeters > 0) local.distanceMeters else poi.distanceMeters
-        return local.copy(
+        val ref = local.ref.copy(
             lat = lat,
             lng = lng,
             address = address,
             distanceMeters = distance,
             source = PlaceRef.SOURCE_CATALOG,
+            floor = local.floor.ifBlank { poi.floor },
+            category = local.category.ifBlank { poi.category },
+        )
+        return local.copy(
+            ref = ref,
+            rating = if (local.rating > 0) local.rating else poi.rating,
+            avgCost = if (local.avgCost > 0) local.avgCost else poi.avgCost,
+            tel = local.tel.ifBlank { poi.tel },
+            hoursToday = local.hoursToday.ifBlank { poi.hoursToday },
+            hoursWeek = local.hoursWeek.ifBlank { poi.hoursWeek },
+            businessArea = local.businessArea.ifBlank { poi.businessArea },
+            tag = local.tag.ifBlank { poi.tag },
+            keytag = local.keytag.ifBlank { poi.keytag },
+            alias = local.alias.ifBlank { poi.alias },
         )
     }
 
-    private fun samePlace(a: PlaceRef, b: PlaceRef): Boolean {
+    private fun samePlace(a: PlaceProfile, b: PlaceProfile): Boolean {
         val ca = compact(a.name)
         val cb = compact(b.name)
         if (ca.length < 2 || cb.length < 2) return false
-        val named = ca.contains(cb) || cb.contains(ca)
-        if (named) return true
-        return false
+        return ca.contains(cb) || cb.contains(ca)
     }
 
     private fun nameHit(query: String, name: String): Boolean {

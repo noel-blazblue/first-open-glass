@@ -4,9 +4,9 @@ import android.os.SystemClock
 import com.glass.dining.phone.vision.StreamVision
 import com.glass.dining.shared.agent.AgentToolCatalog
 import com.glass.dining.shared.agent.EnvironmentStore
+import com.glass.dining.shared.agent.EvidenceGate
 import com.glass.dining.shared.agent.FloorQueryPolicy
 import com.glass.dining.shared.agent.SceneObservation
-import com.glass.dining.shared.agent.ScenePerception
 import com.glass.dining.shared.engine.StoreVision
 import com.glass.dining.shared.vision.VisionIntent
 import org.json.JSONObject
@@ -97,19 +97,24 @@ class VisionToolProvider(private val world: PhoneWorld) {
         val seen = json.optString("store").ifBlank { json.optString("ocr") }
         val catalog = StoreVision.matchStore(world.session.catalog.stores(), seen)
         val unique = catalog != null
-        val promote = ScenePerception.canPromoteStore(
-            observation = world.observation ?: SceneObservation(
-                scene = "storefront",
-                visibleText = seen,
-                storeCandidate = seen,
-                stability = 2,
+        val promote = EvidenceGate.decideBind(
+            EvidenceGate.BindProposal(
+                source = EvidenceGate.BindSource.OBSERVATION,
+                placeId = catalog?.id.orEmpty(),
+                name = seen,
+                observation = world.observation ?: SceneObservation(
+                    scene = "storefront",
+                    visibleText = seen,
+                    storeCandidate = seen,
+                    stability = 2,
+                ),
+                uniqueCatalogName = if (unique) catalog!!.shortName else "",
+                vlmName = seen,
+                vlmConfidence = json.optDouble("confidence", 0.0).toFloat(),
+                ocrContainsName = seen.isNotBlank() && json.optString("ocr").contains(seen.take(2)),
             ),
-            uniqueCatalogName = if (unique) catalog!!.shortName else "",
-            vlmName = seen,
-            vlmConfidence = json.optDouble("confidence", 0.0).toFloat(),
-            ocrContainsName = seen.isNotBlank() && json.optString("ocr").contains(seen.take(2)),
         )
-        if (promote && catalog != null) {
+        if (promote.accept && catalog != null) {
             val result = world.session.look(forceStoreId = catalog.id, visionHint = seen)
             if (result != null) {
                 world.selectedThisTurn = true

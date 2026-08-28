@@ -1,12 +1,19 @@
 package com.glass.dining.shared.agent
 
 /**
- * 代码级护栏：确认、副作用去重、读工具才允许有限重试。
+ * 单次 run 的代码级护栏：能力校验、确认、副作用去重、读工具有限重试。
+ * 每次 Agent 提问新建实例，不要跨轮复用。
  */
-class ActionPolicy {
+class ActionPolicy(
+    private val capabilities: Set<String> = emptySet(),
+) {
     private val usedSideEffects = linkedSetOf<String>()
 
     fun guard(spec: ToolSpec?, name: String, argumentsJson: String, userText: String): String? {
+        val required = spec?.requiredCapability.orEmpty()
+        if (required.isNotBlank() && required !in capabilities) {
+            return capabilityMessage(required)
+        }
         val risk = spec?.risk ?: return unknownWriteGuard(name)
         if (risk == ToolRisk.CONFIRM) {
             return confirmGuard(name, argumentsJson, userText)
@@ -50,6 +57,13 @@ class ActionPolicy {
 
     private fun unknownWriteGuard(name: String): String? {
         return if (name in CONFIRM_TOOLS) "未知高风险工具 $name" else null
+    }
+
+    private fun capabilityMessage(capability: String): String {
+        return when (capability) {
+            WorldContext.CAP_GPS -> "没有定位权限或尚未拿到定位，请在系统设置打开精确位置，或到开阔处再试。"
+            else -> "当前缺少能力 $capability，无法调用该工具"
+        }
     }
 
     companion object {

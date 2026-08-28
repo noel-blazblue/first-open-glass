@@ -4,9 +4,9 @@
 
 产品是 **到餐 Agent**，不是导航 App。对话是唯一入口；认店、推荐、导航、以及以后的菜单 / 验券 / 结账都是 Agent 可调用的技能。有目的店且用户要出发时，由模型调用 `start_nav`，不靠固定口令。
 
-店来自 **门店录入 App**（店门口记录真实经纬度），APK 不带店数据。排队、人均、招牌由录入填写。定位、步行路线、剩余距离用真 GPS + 高德。支付和核券本轮仍未接真接口。没有眼镜时，用手机里的绿字 HUD 预览走通主路径。
+店来自 **门店录入 App**（店门口记录真实经纬度）以及 **高德公开地点**。本地目录才有排队、招牌、演示券；公开地点的评分/人均/营业时间/电话来自高德 `PlaceProfile`，没有的字段不编。定位、步行路线、剩余距离用真 GPS + 高德。支付和核券本轮仍未接真接口。
 
-本仓库的眼镜是消费固件（系统版本号不含 `e`）。**不要**再用企业版 `GlassSdk` / `PSecuritySDK` 当主路径。
+眼镜主应用是 **CustomApp 原生 Android**（`apps/glass-nav`）。消费版 CustomView 的「四行绿字、单绿光波导」不是能力上限。
 
 ---
 
@@ -34,7 +34,8 @@
 
 会话上下文（一直带着，技能共享）：
 
-- `currentStore`：当前在聊 / 在看的店
+- `currentStore`：当前在聊 / 在看的店（目录 `Store` 或由 `PlaceProfile` 投影）
+- 地点句柄 `PlaceRef` 与资料 `PlaceProfile` 分层，不要把高德字段塞进 Agent 协议
 - `candidates`：刚才推荐的 2～3 家
 - `activeSkill`：`none` | `browse` | `nav` | 以后 `menu` | `coupon` | `pay`
 - 导航等技能的私有状态，停技能时清掉，店上下文可保留
@@ -108,14 +109,26 @@ Agent 每一轮模型调用都走可取消 SSE（含 `tool_calls`）。镜片时
 
 ## 6. HUD
 
-两种版式，不要混用：
+眼镜端是 CustomApp 原生界面，**不要**用消费版 CustomView 的「四行绿字、每行 16 字、单绿色、黑底当透明」限制设计。
 
-- **talk（闲置 / 在听 / 思考 / 纯对话回复）：** 学乐奇。上三分之二空着；下三分之一等宽折 2～3 行绿字 + 圆点头像。听：`Hi, 我在听`。回复是同一块口语，禁止把一句拆成加粗主标题和正文。底栏只显示真时钟。
-- **card（门店卡 / 导航条）：** 四行绿字换皮。口播只走 TTS，不要把同一句再拆进 title 和 extra。
+- **talk（闲置 / 在听 / 思考 / 纯对话回复）：** 对话面。上半屏让路，下半屏出口语；听：`Hi, 我在听`。回复是同一块口语，不要拆成加粗主标题和正文。口播走 TTS。
+- **门店详情：** 按 `PlaceProfile` 做原生面板：店名、品类、有值才展示的评分/人均、今日营业、商圈·楼层、电话。公开地点不展示排队、券、评价条数。本地目录店才叠加排队和优惠。
+- **导航条：** `去某店` / `右转 80米` / 当前路段短句 / `剩余 320米`。不做乐奇时速 + 小地图。
 
-导航条例：`去某店` / `右转 80米` / 当前路段短句 / `剩余 320米`。不做乐奇时速 + 小地图。不搬乐奇桌面三个 tab、假天气、系统手势提示。
+当前 `HudCard` 四行卡仍是通道里的过渡协议，新门店详情不经过它。手机预览对齐即将落地的原生门店面板。
 
-光波导 **单绿色** HUD，黑底当透明。网页 / Compose 全彩预览不等于镜片观感；手机预览必须用同一套绿字文案和版式。
+---
+
+## 6.1 地点模型
+
+| 类型 | 包 | 职责 |
+| --- | --- | --- |
+| `PlaceRef` | `shared/place` | Agent 地点句柄：id、名称、坐标、距离、来源、楼层 |
+| `PlaceProfile` | `shared/place` | 公开地点资料：高德评分、人均、电话、营业时间、商圈、标签。问答读这里 |
+| `Store` | `shared/model` + `catalog` | 本地目录增强：排队、券、招牌。不要用它冒充高德店 |
+| `WorldContext` | `shared/agent` | 一轮对话的世界快照，只引用 `PlaceRef` / `PlaceProfile`，不堆详情字段 |
+
+高德周边搜索带 `show_fields=business,indoor`，解析进 `PlaceProfile`。用户问营业时间、人均、电话时，模型用【门店资料】回答；没有的字段说没有。
 
 ---
 
@@ -127,10 +140,10 @@ Agent 每一轮模型调用都走可取消 SSE（含 `tool_calls`）。镜片时
 - 默认对话面；认店 / 推荐后门店卡；仅 `start_nav` 后导航条
 - 没选店禁止开导航；有店且用户要走则模型调 tool，不靠固定口令
 - 短 TTS；眼镜麦 PCM + 手机 Vosk
-- 候选 2～3 家；店内问答用录入字段（人均/排队/招牌）
-- 真 GPS + 高德步行：终点是录入坐标，剩余米数随定位变，偏航重规划，到店判定
+- 候选 2～3 家；公开地点问答用高德 `PlaceProfile`；目录店问答用录入字段
+- 真 GPS + 高德步行：终点是录入坐标或高德坐标，剩余米数随定位变，偏航重规划，到店判定
 - 室内无预建地图探索：眼镜本地 VIO 贴地箭头、可通行区、跟踪丢失隐藏；手机 VLM 语义节点 + VIO 几何边活拓扑，可回退，无导视时请求环视
-- 手机端绿字 HUD 预览与镜片同一套 talk / card
+- 门店详情走 CustomApp 原生面板；对话面仍是 talk
 
 ### P1（骨架预留）
 
@@ -148,7 +161,8 @@ Agent 每一轮模型调用都走可取消 SSE（含 `tool_calls`）。镜片时
 - 企业版 `glass3.open.sdk` / `phone.sdk`、P2P JSON、`clientId=GlassDining`
 - 把 `apps/glass` 当主应用；把 `apps/phone-nav` 当产品入口
 - 用 AIUI Studio / 灵珠网页当本期主工程
-- 全彩图像 HUD、AR Studio / UXR、乐奇时速 + 小地图克隆
+- 把消费版 CustomView 四行绿字当成 CustomApp 的 UI 上限
+- 克隆乐奇桌面三个 tab、假天气、时速 + 小地图
 
 ---
 
@@ -156,12 +170,12 @@ Agent 每一轮模型调用都走可取消 SSE（含 `tool_calls`）。镜片时
 
 | 端 | 职责 |
 | --- | --- |
-| 共享模块 `shared/` | 门店模型、目录 JSON、`DiningSession`、绿字 `HudCard` |
+| 共享模块 `shared/` | Agent 协议、`place/` 地点句柄与资料、目录 JSON、`DiningSession` |
 | `nav-api/` | 眼镜 CustomApp 通道与 HUD/导航指令 |
 | 手机 `apps/phone` | **主应用 / 产品入口**。乐奇授权拿 CXR token；`CXRLink` + `CUSTOMAPP`；Agent 工具；TTS；GPS + 高德步行；读门店目录 |
 | 门店 `apps/store` | 线下录入店名和当前经纬度，写入 `Download/glass-stores.json`；改完不用重装到餐 |
 | 乐奇 AI App | 连眼镜、桥接 IO。本 App 不自己扫 Glass3 蓝牙 |
-| 眼镜 CustomApp | 一块 Activity：对话 talk / 门店卡 / 导航条；默认对话面；仅 `look_store` 单次快门 |
+| 眼镜 CustomApp | 一块 Activity：对话 talk / 门店详情 / 导航条；默认对话面；仅 `look_store` 单次快门 |
 | `apps/phone-nav` | 实验室旁路，**不是**产品入口 |
 | `apps/glass` | **归档**，仅作历史裸机实验，不参与本期验收 |
 
@@ -172,11 +186,11 @@ Agent 每一轮模型调用都走可取消 SSE（含 `tool_calls`）。镜片时
 ## 9. 工程
 
 ```text
-apps/phone     主应用：到餐 Agent + CXR-L + 乐奇 + GPS 步行 + 绿字预览
+apps/phone     主应用：到餐 Agent + CXR-L + 乐奇 + GPS 步行
 apps/store     门店录入：店名 + 当前经纬度，随时改 JSON
-shared         模型 / 目录 JSON / 匹配 / 问答 / HudCard
+shared         Agent 协议 / place 地点模型 / 目录 JSON / 匹配 / 问答
 nav-api        CustomApp 通道
-apps/glass-nav 眼镜 CustomApp（对话面 / 门店卡 / 导航条）
+apps/glass-nav 眼镜 CustomApp（对话面 / 门店详情 / 导航条）
 apps/phone-nav 实验室，不当入口
 apps/glass     归档（企业/裸机）
 ```

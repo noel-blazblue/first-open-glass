@@ -1,5 +1,7 @@
 package com.glass.dining.shared.agent
 
+import com.glass.dining.shared.place.AmapPlaceJson
+import com.glass.dining.shared.place.PlaceRef
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -22,6 +24,31 @@ class AmapPlaceJsonTest {
         assertEquals(180, result.places[0].distanceMeters)
         assertEquals(PlaceRef.SOURCE_AMAP, result.places[0].source)
         assertFalse(result.places[0].catalogBacked)
+        assertEquals(0.0, result.places[0].rating, 0.0)
+    }
+
+    @Test
+    fun parsesBusinessAndIndoorFields() {
+        val raw = """
+            {"status":"1","pois":[
+              {"id":"B0HGUAEBKL","name":"潮黄记·潮汕鲜牛肉火锅(望京店)",
+               "address":"望京东园1区120号楼新荟城购物中心2F层2F-3",
+               "location":"116.481716,39.998472","distance":"1500",
+               "type":"餐饮服务;中餐厅;中餐厅",
+               "business":{"business_area":"望京","cost":"152.00","keytag":"牛肉火锅",
+                 "opentime_today":"11:00-23:00","opentime_week":"周一至周日 11:00-23:00",
+                 "rating":"4.7","tag":"牛肉","tel":"13581699848"},
+               "indoor":{"indoor_map":"1","floor":"2","truefloor":"2F"}}
+            ]}
+        """.trimIndent()
+        val place = AmapPlaceJson.parseAround(raw).places.single()
+        assertEquals(4.7, place.rating, 0.001)
+        assertEquals(152, place.avgCost)
+        assertEquals("11:00-23:00", place.hoursToday)
+        assertEquals("望京", place.businessArea)
+        assertEquals("2F", place.floor)
+        assertEquals("13581699848", place.tel)
+        assertEquals("牛肉火锅", place.keytag)
     }
 
     @Test

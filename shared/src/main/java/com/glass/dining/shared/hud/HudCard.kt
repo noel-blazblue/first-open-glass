@@ -1,5 +1,6 @@
 package com.glass.dining.shared.hud
 
+import com.glass.dining.shared.place.PlaceFacts
 import com.glass.dining.shared.model.Coupon
 import com.glass.dining.shared.model.MatchResult
 import com.glass.dining.shared.model.MenuItem
@@ -250,12 +251,16 @@ data class HudCard(
 
         fun fromStore(store: Store, extra: String? = null): HudCard {
             if (!store.catalogBacked) {
-                val wait = if (store.distanceMeters > 0) "约${store.distanceMeters}米" else ""
+                val lines = if (extra.isNullOrBlank()) {
+                    PlaceFacts.detailCard(store)
+                } else {
+                    PlaceFacts.listCard(store, extra)
+                }
                 return HudCard(
-                    title = store.shortName,
-                    meta = store.address.ifBlank { store.category }.take(LINE),
-                    wait = wait,
-                    extra = extra.orEmpty(),
+                    title = lines.title,
+                    meta = lines.meta,
+                    wait = lines.wait,
+                    extra = lines.extra,
                     skill = "browse",
                     layout = LAYOUT_CARD,
                 ).clipped()

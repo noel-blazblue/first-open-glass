@@ -116,6 +116,7 @@ object StoreCatalogJson {
             put("floor", store.floor)
             put("source", store.source)
             put("catalogBacked", store.catalogBacked)
+            if (store.businessArea.isNotBlank()) put("businessArea", store.businessArea)
             put("tags", JSONArray(store.tags))
             put("signatures", JSONArray(store.signatures))
             put("suitable", JSONArray(store.suitable))
@@ -158,6 +159,7 @@ object StoreCatalogJson {
             floor = obj.optString("floor"),
             source = obj.optString("source").ifBlank { "catalog" },
             catalogBacked = obj.optBoolean("catalogBacked", obj.optString("source") != "amap"),
+            businessArea = obj.optString("businessArea"),
         )
     }
 

@@ -32,6 +32,7 @@ data class Store(
     val floor: String = "",
     val source: String = "catalog",
     val catalogBacked: Boolean = true,
+    val businessArea: String = "",
 )
 
 data class Scene(

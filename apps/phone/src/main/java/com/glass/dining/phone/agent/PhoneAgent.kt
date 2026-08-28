@@ -19,7 +19,6 @@ object PhoneAgent {
     private const val TAG = "GlassDiningPhone"
     private val history = CopyOnWriteArrayList<LlmMessage>()
     private val loop = AgentLoop(maxSteps = 8)
-    private val policy = ActionPolicy()
 
     fun ask(
         question: String,
@@ -47,7 +46,7 @@ object PhoneAgent {
             },
             execute = { call -> registry.execute(call.name, parseArgs(call.argumentsJson)) },
             specOf = { registry.specOf(it) },
-            policy = policy,
+            policy = ActionPolicy(world.runtimeCapabilities),
             cancel = cancel,
             onEvent = { event ->
                 Log.i(TAG, "agent ${event.kind} step=${event.step} name=${event.name} ${event.latencyMs}ms ${event.detail}")

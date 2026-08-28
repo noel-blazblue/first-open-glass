@@ -1,6 +1,7 @@
 package com.glass.dining.phone.agent
 
 import com.glass.dining.shared.agent.AgentToolCatalog
+import com.glass.dining.shared.place.PlaceFacts
 import com.glass.dining.shared.engine.StoreVision
 import com.glass.dining.shared.hud.HudCard
 import com.glass.dining.shared.model.ActiveSkill
@@ -95,36 +96,16 @@ class DiningToolProvider(private val world: PhoneWorld) {
             ?: return JSONObject().put("ok", false).put("error", "还没有确认的地点").toString()
         val question = args.optString("question").ifBlank { world.question }
         val result = world.session.ask(question)
-        return JSONObject()
-            .put("ok", true)
-            .put("store", store.shortName)
-            .put("catalog_backed", store.catalogBacked)
-            .put("message", result.answer)
-            .toString()
+        val json = PlaceFacts.write(JSONObject().put("ok", true), store)
+            .put("question", question)
+        val message = if (store.catalogBacked) result.answer else PlaceFacts.spokenSummary(store)
+        return json.put("message", message).toString()
     }
 
     companion object {
         fun facts(result: com.glass.dining.shared.model.MatchResult): JSONObject {
-            val store = result.store
-            val json = JSONObject()
-                .put("ok", true)
-                .put("store_id", store.id)
-                .put("place_id", store.id)
-                .put("store", store.name)
-                .put("shortName", store.shortName)
-                .put("address", store.address)
-                .put("source", store.source)
-                .put("catalog_backed", store.catalogBacked)
+            return PlaceFacts.write(JSONObject().put("ok", true), result.store)
                 .put("candidates", result.candidates.joinToString("、") { it.shortName })
-            if (store.catalogBacked) {
-                json.put("rating", store.rating)
-                    .put("avgPrice", store.avgPrice)
-                    .put("waitMinutes", store.waitMinutes)
-                    .put("openNow", store.openNow)
-                    .put("signatures", store.signatures.joinToString("、"))
-                    .put("deals", store.deals.joinToString("；") { "${it.title}现价${it.price}" })
-            }
-            return json
         }
     }
 }

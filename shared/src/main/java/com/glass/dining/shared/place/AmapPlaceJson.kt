@@ -1,4 +1,4 @@
-package com.glass.dining.shared.agent
+package com.glass.dining.shared.place
 
 object AmapPlaceJson {
     fun parseAround(raw: String): AroundResult {
@@ -16,15 +16,28 @@ object AmapPlaceJson {
             val lng = parts.getOrNull(0)?.toDoubleOrNull() ?: 0.0
             val lat = parts.getOrNull(1)?.toDoubleOrNull() ?: 0.0
             val id = field(item, "id").ifBlank { "amap:$name:$lat:$lng" }
-            PlaceRef(
+            val ref = PlaceRef(
                 id = id,
                 name = name,
                 address = field(item, "address"),
                 lat = lat,
                 lng = lng,
-                distanceMeters = field(item, "distance").toIntOrNull() ?: 0,
+                distanceMeters = field(item, "distance").toDoubleOrNull()?.toInt() ?: 0,
                 source = PlaceRef.SOURCE_AMAP,
+                floor = field(item, "truefloor").ifBlank { field(item, "floor") },
                 category = field(item, "type"),
+            )
+            PlaceProfile(
+                ref = ref,
+                rating = field(item, "rating").toDoubleOrNull() ?: 0.0,
+                avgCost = field(item, "cost").toDoubleOrNull()?.toInt() ?: 0,
+                tel = field(item, "tel"),
+                hoursToday = field(item, "opentime_today"),
+                hoursWeek = field(item, "opentime_week"),
+                businessArea = field(item, "business_area"),
+                tag = field(item, "tag"),
+                keytag = field(item, "keytag").ifBlank { field(item, "rectag") },
+                alias = field(item, "alias"),
             )
         }
         return AroundResult(ok = true, places = places)
@@ -79,7 +92,7 @@ object AmapPlaceJson {
 
     data class AroundResult(
         val ok: Boolean,
-        val places: List<PlaceRef> = emptyList(),
+        val places: List<PlaceProfile> = emptyList(),
         val error: String = "",
         val message: String = "",
     )

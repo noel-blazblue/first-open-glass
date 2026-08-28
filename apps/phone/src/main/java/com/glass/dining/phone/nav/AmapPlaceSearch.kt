@@ -1,8 +1,7 @@
 package com.glass.dining.phone.nav
 
 import android.util.Log
-import com.glass.dining.shared.agent.AmapPlaceJson
-import com.glass.dining.shared.agent.PlaceRef
+import com.glass.dining.shared.place.AmapPlaceJson
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -23,7 +22,8 @@ object AmapPlaceSearch {
         }
         val loc = String.format(Locale.US, "%.6f,%.6f", origin.lng, origin.lat)
         val url = "$ENDPOINT?key=${enc(key)}&location=${enc(loc)}&keywords=${enc(keyword)}" +
-            "&radius=$radius&sortrule=distance&page_size=10&page_num=1"
+            "&radius=$radius&sortrule=distance&page_size=10&page_num=1" +
+            "&show_fields=${enc("business,indoor")}"
         val raw = get(url) ?: return AmapPlaceJson.AroundResult(
             false,
             error = "amap_error",

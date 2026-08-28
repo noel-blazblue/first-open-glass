@@ -3,9 +3,10 @@ package com.glass.dining.phone.agent
 import android.util.Log
 import com.glass.dining.phone.nav.AmapPlaceSearch
 import com.glass.dining.shared.agent.AgentToolCatalog
-import com.glass.dining.shared.agent.DestinationResolve
-import com.glass.dining.shared.agent.PlaceRef
-import com.glass.dining.shared.agent.PlaceResolver
+import com.glass.dining.shared.place.DestinationResolve
+import com.glass.dining.shared.place.PlaceFacts
+import com.glass.dining.shared.place.PlaceProfile
+import com.glass.dining.shared.place.PlaceResolver
 import com.glass.dining.shared.engine.StoreVision
 import com.glass.dining.shared.model.ActiveSkill
 import org.json.JSONArray
@@ -135,7 +136,7 @@ class NavigationToolProvider(private val world: PhoneWorld) {
             .toString()
     }
 
-    private fun pickPlace(placeId: String, name: String, index: Int): PlaceRef? {
+    private fun pickPlace(placeId: String, name: String, index: Int): PlaceProfile? {
         if (placeId.isNotBlank()) {
             world.latestPlaces().firstOrNull { it.id == placeId || it.storeId == placeId }?.let { return it }
             world.session.catalog.storeById(placeId)?.let { return PlaceResolver.fromStore(it) }
@@ -181,20 +182,11 @@ class NavigationToolProvider(private val world: PhoneWorld) {
         }
     }
 
-    private fun placeJson(place: PlaceRef): JSONObject {
-        return JSONObject()
-            .put("place_id", place.id)
-            .put("name", place.name)
-            .put("address", place.address)
-            .put("distance_meters", place.distanceMeters)
-            .put("source", place.source)
-            .put("floor", place.floor)
-            .put("lat", place.lat)
-            .put("lng", place.lng)
-            .put("catalog_backed", place.catalogBacked)
+    private fun placeJson(place: PlaceProfile): JSONObject {
+        return PlaceFacts.write(JSONObject(), place)
     }
 
-    private fun summarizePlaces(places: List<PlaceRef>, keyword: String): String {
+    private fun summarizePlaces(places: List<PlaceProfile>, keyword: String): String {
         if (places.isEmpty()) return "附近没有找到$keyword"
         val first = places.first()
         val dist = distance(first)
@@ -205,7 +197,7 @@ class NavigationToolProvider(private val world: PhoneWorld) {
         }
     }
 
-    private fun distance(place: PlaceRef): String {
+    private fun distance(place: PlaceProfile): String {
         return if (place.distanceMeters > 0) "约${place.distanceMeters}米" else ""
     }
 

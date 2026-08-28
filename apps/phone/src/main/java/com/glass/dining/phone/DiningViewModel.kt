@@ -31,8 +31,8 @@ import com.glass.dining.phone.nav.WalkGuide
 import com.glass.dining.shared.agent.AgentContextAssembler
 import com.glass.dining.shared.agent.EnvironmentMerge
 import com.glass.dining.shared.agent.EnvironmentStore
-import com.glass.dining.shared.agent.PlaceRef
-import com.glass.dining.shared.agent.PlaceResolver
+import com.glass.dining.shared.place.PlaceProfile
+import com.glass.dining.shared.place.PlaceResolver
 import com.glass.dining.shared.agent.SceneObservation
 import com.glass.dining.shared.agent.ScenePerception
 import com.glass.dining.shared.agent.SpeechPriority
@@ -147,7 +147,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile private var capturing: Boolean = false
     private val visionWait = AtomicReference<CountDownLatch?>(null)
     @Volatile private var latestObservation: SceneObservation? = null
-    @Volatile private var cachedPlaces: List<PlaceRef> = emptyList()
+    @Volatile private var cachedPlaces: List<PlaceProfile> = emptyList()
     @Volatile private var visionBindStore: Boolean = true
     @Volatile private var autoStoreShownId: String? = null
     private val runtime = Runtime()
@@ -1322,11 +1322,13 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         val store = session.currentStore
         val gps = PhoneGps.last
         val env = EnvironmentStore.snapshot()
-        val disambiguation = session.candidates.map { PlaceResolver.fromStore(it) }
+        val bound = store?.let { PlaceResolver.fromStore(it) }
+        val disambiguation = session.candidates.map { PlaceResolver.fromStore(it).ref }
         val search = cachedPlaces.filter { place -> disambiguation.none { it.id == place.id } }
         return WorldContext(
             skill = session.activeSkill.name.lowercase(),
-            boundPlace = store?.let { PlaceResolver.fromStore(it) },
+            boundPlace = bound?.ref,
+            boundProfile = bound,
             disambiguation = disambiguation,
             recentSearch = search,
             observation = latestObservation,
@@ -1390,13 +1392,13 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }
         override fun rememberSpokenStore() = this@DiningViewModel.rememberSpokenStore()
         override fun rememberVisionStore(id: String) = this@DiningViewModel.rememberVisionStore(id)
-        override fun bindPlace(place: PlaceRef): MatchResult {
+        override fun bindPlace(place: PlaceProfile): MatchResult {
             val result = session.bindPlace(place)
             cachedPlaces = listOf(place) + cachedPlaces.filter { it.id != place.id }
             return result
         }
-        override fun latestPlaces(): List<PlaceRef> = cachedPlaces
-        override fun rememberPlaces(places: List<PlaceRef>) {
+        override fun latestPlaces(): List<PlaceProfile> = cachedPlaces
+        override fun rememberPlaces(places: List<PlaceProfile>) {
             cachedPlaces = places
         }
     }

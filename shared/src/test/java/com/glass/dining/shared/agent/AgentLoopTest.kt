@@ -261,4 +261,93 @@ class AgentLoopTest {
         assertTrue(spoken.isNotEmpty())
         assertEquals("你好，我在听。", spoken.last())
     }
+
+    @Test
+    fun gpsToolBlockedWithoutCapability() {
+        val loop = AgentLoop()
+        val messages = mutableListOf(LlmMessage("user", "附近有什么门店"))
+        val ran = AtomicInteger(0)
+        var step = 0
+        val spec = AgentToolCatalog.SEARCH_NEARBY
+        val out = loop.run(
+            messages,
+            "附近有什么门店",
+            requestModel = { _, _ ->
+                step += 1
+                if (step == 1) {
+                    LlmTurn(toolCalls = listOf(LlmToolCall("1", spec.name, """{"keyword":"美食"}""")))
+                } else {
+                    LlmTurn("现在没定位，没法搜附近。")
+                }
+            },
+            execute = {
+                ran.incrementAndGet()
+                ToolResult.json(true, """{"ok":true}""")
+            },
+            specOf = { spec },
+            policy = ActionPolicy(),
+        )
+        assertEquals(0, ran.get())
+        assertTrue(messages.any { it.content.contains("定位") })
+        assertTrue(out.speak.contains("定位") || out.speak.contains("没法搜"))
+    }
+
+    @Test
+    fun gpsToolRunsWhenCapabilityPresent() {
+        val loop = AgentLoop()
+        val messages = mutableListOf(LlmMessage("user", "附近有什么门店"))
+        val ran = AtomicInteger(0)
+        var step = 0
+        val spec = AgentToolCatalog.SEARCH_NEARBY
+        loop.run(
+            messages,
+            "附近有什么门店",
+            requestModel = { _, _ ->
+                step += 1
+                if (step == 1) {
+                    LlmTurn(toolCalls = listOf(LlmToolCall("1", spec.name, """{"keyword":"美食"}""")))
+                } else {
+                    LlmTurn("附近有几家餐厅。")
+                }
+            },
+            execute = {
+                ran.incrementAndGet()
+                ToolResult.json(true, """{"ok":true}""")
+            },
+            specOf = { spec },
+            policy = ActionPolicy(setOf(WorldContext.CAP_GPS)),
+        )
+        assertEquals(1, ran.get())
+    }
+
+    @Test
+    fun writePolicyDoesNotLeakAcrossRuns() {
+        val write = ToolSpec("start_navigation", "nav", "{}", ToolRisk.WRITE)
+        val args = """{"request_id":"nav-1"}"""
+        fun oneRun(policy: ActionPolicy): Int {
+            val tries = AtomicInteger(0)
+            var step = 0
+            AgentLoop().run(
+                mutableListOf(LlmMessage("user", "出发")),
+                "出发",
+                requestModel = { _, _ ->
+                    step += 1
+                    if (step == 1) {
+                        LlmTurn(toolCalls = listOf(LlmToolCall("1", write.name, args)))
+                    } else {
+                        LlmTurn("好")
+                    }
+                },
+                execute = {
+                    tries.incrementAndGet()
+                    ToolResult.json(true, """{"ok":true}""")
+                },
+                specOf = { write },
+                policy = policy,
+            )
+            return tries.get()
+        }
+        assertEquals(1, oneRun(ActionPolicy(setOf(WorldContext.CAP_GPS))))
+        assertEquals(1, oneRun(ActionPolicy(setOf(WorldContext.CAP_GPS))))
+    }
 }

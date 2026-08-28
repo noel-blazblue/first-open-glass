@@ -1,5 +1,7 @@
 package com.glass.dining.shared.agent
 
+import com.glass.dining.shared.place.PlaceFacts
+
 object AgentContextAssembler {
     fun format(world: WorldContext): String {
         val env = world.environment
@@ -15,8 +17,9 @@ object AgentContextAssembler {
                 add("【待选择地点】" + world.disambiguation.joinToString("、") { it.name })
             }
             if (world.recentSearch.isNotEmpty()) {
-                add("【最近搜索】" + world.recentSearch.take(4).joinToString("、") { it.name } + "（附近搜索缓存，不等于待选择）")
+                add("【最近搜索】" + world.recentSearch.take(4).joinToString("、") { PlaceFacts.listLabel(it) } + "（附近搜索缓存，不等于待选择）")
             }
+            add(catalogLine(world))
             add(pendingLine(world))
         }
         return lines.joinToString("\n")
@@ -52,7 +55,7 @@ object AgentContextAssembler {
             world.skill == "coupon" -> "【当前任务】查看优惠"
             world.skill == "pay" -> "【当前任务】演示支付"
             world.skill == "browse" && dest != null -> "【当前任务】查看门店信息"
-            else -> "【当前任务】闲聊与环境协助"
+            else -> "【当前任务】响应用户当前请求"
         }
     }
 
@@ -122,7 +125,17 @@ object AgentContextAssembler {
             WorldContext.ROLE_SERVING -> "当前服务门店"
             else -> "当前查看门店；不是用户当前位置"
         }
-        return "【业务对象】${place.name}（角色：$role）"
+        val facts = world.boundProfile?.let { PlaceFacts.contextFacts(it) }.orEmpty()
+        val head = "【业务对象】${place.name}（角色：$role）"
+        return if (facts.isBlank()) head else "$head\n【门店资料】$facts"
+    }
+
+    private fun catalogLine(world: WorldContext): String {
+        return if (world.catalogCount > 0) {
+            "【本地目录】餐饮增强数据 ${world.catalogCount} 家，可 recommend"
+        } else {
+            "【本地目录】0 家，不要 recommend，搜附近公开地点"
+        }
     }
 
     private fun pendingLine(world: WorldContext): String {

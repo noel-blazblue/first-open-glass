@@ -1,7 +1,7 @@
 package com.glass.dining.shared.engine
 
-import com.glass.dining.shared.agent.PlaceRef
-import com.glass.dining.shared.agent.PlaceResolver
+import com.glass.dining.shared.place.PlaceProfile
+import com.glass.dining.shared.place.PlaceResolver
 import com.glass.dining.shared.catalog.MemoryStoreCatalog
 import com.glass.dining.shared.catalog.StoreCatalog
 import com.glass.dining.shared.catalog.StoreCatalogIds
@@ -171,18 +171,19 @@ class QaEngine {
             q.contains("团购") || q.contains("优惠") || q.contains("便宜") -> "团购"
             q.contains("包间") || q.contains("包厢") -> "包间"
             q.contains("评价") || q.contains("怎么样") || q.contains("评分") -> "评价"
-            q.contains("营业") || q.contains("开门") || q.contains("打烊") -> "营业"
+            q.contains("电话") || q.contains("怎么打") -> "电话"
+            q.contains("营业") || q.contains("开门") || q.contains("打烊") || q.contains("关门") -> "营业"
             q.contains("怎么走") || q.contains("导航") || q.contains("出发") || q.contains("带我去") -> "导航"
             else -> "评价"
         }
     }
 
     private fun answerOf(store: Store, intent: String): String {
-        if (!store.catalogBacked && intent in setOf("人均", "排队", "团购", "包间", "招牌")) {
-            return "${store.shortName}是公开地点，没有排队、人均和优惠数据。"
+        if (!store.catalogBacked && intent in setOf("排队", "团购", "包间", "招牌")) {
+            return "${store.shortName}是公开地点，没有排队、招牌和优惠数据。"
         }
         return when (intent) {
-            "人均" -> if (store.avgPrice > 0) "${store.shortName}人均大约${store.avgPrice}元。" else "${store.shortName}还没录入人均。"
+            "人均" -> if (store.avgPrice > 0) "${store.shortName}人均大约${store.avgPrice}元。" else "${store.shortName}还没有人均数据。"
             "排队" -> if (!store.openNow) {
                 "${store.shortName}现在已经打烊。"
             } else if (store.waitMinutes <= 0) {
@@ -201,6 +202,11 @@ class QaEngine {
                 "${store.shortName}还没录入优惠。"
             }
             "包间" -> if (store.hasPrivateRoom) "${store.shortName}有包间。" else "${store.shortName}没录入包间。"
+            "电话" -> if (store.phone.isNotBlank()) {
+                "${store.shortName}电话${store.phone}。"
+            } else {
+                "${store.shortName}还没有电话。"
+            }
             "营业" -> if (store.hours.isNotBlank()) {
                 "${store.shortName}营业时间${store.hours}。"
             } else if (store.openNow) {
@@ -265,7 +271,7 @@ class DiningSession(
         }
     }
 
-    fun bindPlace(place: PlaceRef): MatchResult {
+    fun bindPlace(place: PlaceProfile): MatchResult {
         val result = PlaceResolver.matchResult(place)
         lastMatch = result
         if (activeSkill != ActiveSkill.NAV) {

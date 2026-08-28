@@ -55,7 +55,8 @@
 
 ### 模块抽象
 
-- **一个文件一个主职责**。按领域分包，不按技术层乱堆：`nav/`、`vision/`、`hud/`、`engine/`、`catalog/`。
+- **一个文件一个主职责**。按领域分包，不按技术层乱堆：`place/`、`nav/`、`vision/`、`hud/`、`engine/`、`catalog/`、`agent/`。
+- `shared/agent` 只放运行时协议（世界快照、LLM 回合、工具规格）。地点句柄 `PlaceRef` 和资料 `PlaceProfile` 放 `shared/place`，不要把高德字段堆进 `WorldContext` 或 `PlaceRef`。
 - 纯逻辑（匹配、规划、协议、HUD 数据结构）放 `shared`；Android 系统能力（GPS、相机、CXR、TTS）放对应 `apps/*`。
 - 新能力优先新类型 + 新文件，再由现有编排类调用。不要把导航、视觉、LLM、语音塞进同一个 class。
 - 抽取边界是「能单独理解、单独测」：输入输出清晰。不要为了行数把紧密耦合的 20 行拆成一堆单行文件，也不要建 `Utils.kt` 垃圾桶。

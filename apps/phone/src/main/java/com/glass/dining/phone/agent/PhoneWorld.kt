@@ -3,12 +3,12 @@ package com.glass.dining.phone.agent
 import android.app.Application
 import com.glass.dining.phone.PhoneUiState
 import com.glass.dining.phone.nav.GeoPoint
-import com.glass.dining.shared.agent.PlaceRef
 import com.glass.dining.shared.agent.SceneObservation
 import com.glass.dining.shared.engine.DiningSession
 import com.glass.dining.shared.hud.HudCard
 import com.glass.dining.shared.model.ActiveSkill
 import com.glass.dining.shared.model.MatchResult
+import com.glass.dining.shared.place.PlaceProfile
 import com.glass.dining.shared.vision.VisionIntent
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -36,7 +36,7 @@ interface PhoneWorld {
     fun showCard(card: HudCard)
     fun rememberSpokenStore()
     fun rememberVisionStore(id: String)
-    fun bindPlace(place: PlaceRef): MatchResult
-    fun latestPlaces(): List<PlaceRef>
-    fun rememberPlaces(places: List<PlaceRef>)
+    fun bindPlace(place: PlaceProfile): MatchResult
+    fun latestPlaces(): List<PlaceProfile>
+    fun rememberPlaces(places: List<PlaceProfile>)
 }
