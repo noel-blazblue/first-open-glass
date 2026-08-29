@@ -9,7 +9,7 @@ class ScenarioContractTest {
     fun diningGuideCoversVagueStoreAsk() {
         val prompt = AgentPrompts.BASE
         assertTrue(prompt.contains("【到店美食与餐饮探索】"))
-        assertTrue(prompt.contains("泛指就餐/找店"))
+        assertTrue(prompt.contains("附近有什么门店"))
         assertTrue(prompt.contains("美食") || prompt.contains("餐厅"))
         assertTrue(prompt.contains("禁止把门店"))
         assertFalse(prompt.contains("不要把所有输入都解释成餐饮"))
@@ -17,9 +17,9 @@ class ScenarioContractTest {
     }
 
     @Test
-    fun explicitNonDiningKeepsUserWords() {
+    fun explicitCategoryKeepsUserWords() {
         val prompt = AgentPrompts.BASE
-        assertTrue(prompt.contains("按用户的词处理，不要改成餐饮"))
+        assertTrue(prompt.contains("用户说了品类或店名就用原词"))
         assertFalse(prompt.contains("【附近公共设施与通用地点】"))
     }
 
