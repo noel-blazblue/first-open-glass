@@ -72,7 +72,7 @@ object HudDraw {
                 val item = arr.optJSONObject(i) ?: continue
                 sanitize(item)?.let(kept::add)
             }
-            if (kept.isEmpty()) return null
+            if (kept.none { it.type == "path" }) return null
             HudDrawScene(seq = obj.optLong("seq"), ops = kept)
         } catch (_: Exception) {
             null
@@ -86,6 +86,8 @@ object HudDraw {
         val out = ArrayList<HudPathSeg>()
         var i = 0
         var cmd = ""
+        var x = 0f
+        var y = 0f
         while (i < tokens.size) {
             val token = tokens[i]
             if (token.length == 1 && token[0].isLetter()) {
@@ -96,28 +98,48 @@ object HudDraw {
             when (cmd) {
                 "M", "m" -> {
                     val n = nums(tokens, i, 2) ?: return emptyList()
-                    out.add(HudPathSeg.Move(clampX(n[0]), clampY(n[1])))
+                    x = clampX(n[0])
+                    y = clampY(n[1])
+                    out.add(HudPathSeg.Move(x, y))
                     i += 2
                 }
                 "L", "l" -> {
                     val n = nums(tokens, i, 2) ?: return emptyList()
-                    out.add(HudPathSeg.Line(clampX(n[0]), clampY(n[1])))
+                    x = clampX(n[0])
+                    y = clampY(n[1])
+                    out.add(HudPathSeg.Line(x, y))
                     i += 2
+                }
+                "H", "h" -> {
+                    val n = nums(tokens, i, 1) ?: return emptyList()
+                    x = clampX(n[0])
+                    out.add(HudPathSeg.Line(x, y))
+                    i += 1
+                }
+                "V", "v" -> {
+                    val n = nums(tokens, i, 1) ?: return emptyList()
+                    y = clampY(n[0])
+                    out.add(HudPathSeg.Line(x, y))
+                    i += 1
                 }
                 "C", "c" -> {
                     val n = nums(tokens, i, 6) ?: return emptyList()
+                    x = clampX(n[4])
+                    y = clampY(n[5])
                     out.add(
                         HudPathSeg.Cubic(
                             clampX(n[0]), clampY(n[1]),
                             clampX(n[2]), clampY(n[3]),
-                            clampX(n[4]), clampY(n[5]),
+                            x, y,
                         ),
                     )
                     i += 6
                 }
                 "Q", "q" -> {
                     val n = nums(tokens, i, 4) ?: return emptyList()
-                    out.add(HudPathSeg.Quad(clampX(n[0]), clampY(n[1]), clampX(n[2]), clampY(n[3])))
+                    x = clampX(n[2])
+                    y = clampY(n[3])
+                    out.add(HudPathSeg.Quad(clampX(n[0]), clampY(n[1]), x, y))
                     i += 4
                 }
                 "Z", "z" -> {

@@ -78,7 +78,7 @@ object AgentToolCatalog {
     )
     val DRAW_HUD = spec(
         "draw_hud",
-        "在镜片 480×640 画布上画一帧。这是画笔不是页面类型：只传 path（SVG 子集 M/L/C/Q/Z）和 text。介绍地点、对比几家、讲资料或菜单券时优先用。g 为灰度 0～1。",
+        "在镜片 480×640 画布上画一帧。必须同时有线和字：至少一条 t=path（分隔线、框、箭头），不能整帧只交 text。path.d 用 SVG 子集 M/L/H/V/C/Q/Z，例如 M40 180 L440 180。text 用 x,y,v。g 为灰度 0～1。介绍地点或资料时优先用。导航行进中不要调用。",
         """{"type":"object","properties":{"ops":{"type":"array","items":{"type":"object","properties":{"t":{"type":"string","enum":["path","text"]},"d":{"type":"string"},"w":{"type":"number"},"g":{"type":"number"},"x":{"type":"number"},"y":{"type":"number"},"s":{"type":"number"},"a":{"type":"string"},"v":{"type":"string"}},"required":["t"]}},"seq":{"type":"integer"}},"required":["ops"]}""",
         ToolRisk.WRITE,
         parallelSafe = false,
@@ -127,7 +127,7 @@ object AgentPrompts {
 【镜片画面】
 场景：要把看到的内容画在镜片上，而不是只靠说话。
 何时使用：介绍地点、对比几家、讲菜单/券/资料，或用户要看一眼排版。
-怎么做：先用工具拿到事实，再 draw_hud 用 path 和 text 自己排。画布 480×640，中间偏下安全区，字少、线粗，只用灰阶。只画已查到的字段，不要编数字。不要指望门店卡或四行卡会替你画。导航行进中不要 draw_hud 盖掉方向指引。口播仍短；镜片上的字和嘴里说的可以不同。
+怎么做：先用工具拿到事实，再 draw_hud。ops 必须有线和字：至少一条 path 画分隔/框/箭头，再用 text 标事实。禁止整帧只有文字。画布 480×640，中间偏下安全区，字少、线粗，只用灰阶。只画已查到的字段，不要编数字。不要指望门店卡或四行卡会替你画。导航行进中不要 draw_hud 盖掉方向指引。口播仍短；镜片上的字和嘴里说的可以不同。
 
 【到店美食与餐饮探索】
 场景：发现餐厅、了解排队人均菜单优惠、选定要去的店。

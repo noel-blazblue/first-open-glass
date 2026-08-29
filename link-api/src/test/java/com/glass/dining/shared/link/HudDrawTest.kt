@@ -29,11 +29,26 @@ class HudDrawTest {
     }
 
     @Test
-    fun dropInvalidKeepValid() {
-        val raw = """{"ops":[{"t":"path","d":"bad"},{"t":"text","x":10,"y":20,"v":"药店"}]}"""
+    fun rejectTextOnly() {
+        assertNull(HudDraw.parse("""{"ops":[{"t":"text","x":240,"y":200,"v":"药店"}]}"""))
+    }
+
+    @Test
+    fun dropInvalidKeepValidWhenPathRemains() {
+        val raw = """{"ops":[{"t":"path","d":"bad"},{"t":"path","d":"M40 180 L440 180"},{"t":"text","x":10,"y":20,"v":"药店"}]}"""
         val scene = HudDraw.parse(raw)!!
-        assertEquals(1, scene.ops.size)
-        assertEquals("药店", scene.ops[0].text)
+        assertEquals(2, scene.ops.size)
+        assertEquals("path", scene.ops[0].type)
+        assertEquals("药店", scene.ops[1].text)
+    }
+
+    @Test
+    fun parseHorizontalLine() {
+        val segs = HudDraw.parsePath("M40 180 H440")
+        assertEquals(2, segs.size)
+        assertTrue(segs[1] is HudPathSeg.Line)
+        assertEquals(440f, (segs[1] as HudPathSeg.Line).x, 0.1f)
+        assertEquals(180f, (segs[1] as HudPathSeg.Line).y, 0.1f)
     }
 
     @Test

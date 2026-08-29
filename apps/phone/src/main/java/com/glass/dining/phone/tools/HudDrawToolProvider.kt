@@ -17,13 +17,15 @@ class HudDrawToolProvider(private val world: PhoneWorld) {
         val scene = HudDraw.parse(payload.toString())
             ?: return JSONObject()
                 .put("ok", false)
-                .put("error", "没有可画的线和字。ops 只需 path 的 d 或 text 的 v。")
+                .put("error", "这一帧没有合法的线。必须至少一条 path（如 M40 180 L440 180），不能只交文字。")
                 .toString()
         world.showDraw(scene)
+        val paths = scene.ops.count { it.type == "path" }
         return JSONObject()
             .put("ok", true)
             .put("seq", scene.seq)
             .put("ops", scene.ops.size)
+            .put("paths", paths)
             .toString()
     }
 }

@@ -58,7 +58,10 @@ internal object CxrHud {
                 return@post
             }
             CxrLinkHost.sendCmd(GlassLink.CMD_DRAW, json)
-            Log.i(CxrLinkHost.TAG, "hud.draw seq=${stamped.seq} ops=${stamped.ops.size}")
+            Log.i(
+                CxrLinkHost.TAG,
+                "hud.draw seq=${stamped.seq} ops=${stamped.ops.size} paths=${stamped.ops.count { it.type == "path" }}",
+            )
         }
     }
 
