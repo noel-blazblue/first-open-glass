@@ -1,3 +1,11 @@
+## 2026-08-29 — 动态 HUD 左边被光机裁掉
+
+- 场景：`draw_hud` 画出来的线和字，镜片左边缺一块，像超出屏幕。
+- 误判：眼镜没重装新 renderer；或 CXR 把画面裁了。
+- 根因：协议原先把坐标夹到 0–480。光机可见区比 framebuffer 窄，贴左边的 path/text 会出安全区。官方约定顶约 40px 倒影、底约 80px。
+- 以后先做：`HudDraw` 夹到 x=64–416、y=56–552，prompt 写明不要贴边。圆/矩形/填充要改眼镜 `HudDrawRenderer`，必须 `installGlassAdb`。
+- 不要做：为了「看得见」把坐标再放到 x=0；只装手机期望旧眼镜能画 circle/rect。
+
 ## 2026-08-28 — ADB 空但 USB 还在：先看是不是镜腿折叠关机
 
 - 场景：线还插着，RokidMirror 报 Could not find any ADB device / Server connection failed。电脑 `system_profiler` 仍有 Rokid `0x4ee7`，`adb devices -l` 空。

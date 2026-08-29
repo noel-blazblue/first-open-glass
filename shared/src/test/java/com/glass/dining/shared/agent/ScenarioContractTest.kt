@@ -103,9 +103,9 @@ class ScenarioContractTest {
         assertTrue(prompt.contains("【镜片画面】"))
         assertTrue(prompt.contains("draw_hud"))
         assertTrue(prompt.contains("不要指望门店卡"))
-        assertTrue(prompt.contains("禁止整帧只有文字"))
-        assertTrue(AgentToolCatalog.DRAW_HUD.description.contains("至少一条"))
-        assertTrue(AgentToolCatalog.DRAW_HUD.description.contains("不能整帧只交 text"))
+        assertTrue(prompt.contains("不要填 x,y"))
+        assertTrue(AgentToolCatalog.DRAW_HUD.description.contains("layout"))
+        assertTrue(AgentToolCatalog.DRAW_HUD.description.contains("不要填 x,y"))
     }
 
     @Test

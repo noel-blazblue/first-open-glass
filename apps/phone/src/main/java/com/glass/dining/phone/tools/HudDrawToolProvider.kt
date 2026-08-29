@@ -3,6 +3,7 @@ package com.glass.dining.phone.tools
 import com.glass.dining.phone.agent.PhoneWorld
 import com.glass.dining.shared.agent.AgentToolCatalog
 import com.glass.dining.shared.link.HudDraw
+import com.glass.dining.shared.link.HudLayout
 import org.json.JSONObject
 
 class HudDrawToolProvider(private val world: PhoneWorld) {
@@ -11,21 +12,25 @@ class HudDrawToolProvider(private val world: PhoneWorld) {
     }
 
     private fun draw(args: JSONObject): String {
-        val payload = JSONObject()
-            .put("seq", args.optLong("seq"))
-            .put("ops", args.optJSONArray("ops"))
-        val scene = HudDraw.parse(payload.toString())
-            ?: return JSONObject()
+        val scene = HudLayout.compile(args) ?: run {
+            val payload = JSONObject()
+                .put("seq", args.optLong("seq"))
+                .put("ops", args.optJSONArray("ops"))
+            HudDraw.parse(payload.toString())
+        }
+        if (scene == null) {
+            return JSONObject()
                 .put("ok", false)
-                .put("error", "这一帧没有合法的线。必须至少一条 path（如 M40 180 L440 180），不能只交文字。")
+                .put("error", "交 layout 列/行/字（不要填 x,y），或至少一条 path/circle/rect。")
                 .toString()
+        }
         world.showDraw(scene)
-        val paths = scene.ops.count { it.type == "path" }
         return JSONObject()
             .put("ok", true)
             .put("seq", scene.seq)
             .put("ops", scene.ops.size)
-            .put("paths", paths)
+            .put("layout", args.has("layout"))
+            .put("shapes", scene.ops.count { it.type != "text" })
             .toString()
     }
 }

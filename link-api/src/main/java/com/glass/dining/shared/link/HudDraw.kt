@@ -13,6 +13,10 @@ data class HudDrawOp(
     val size: Float = 18f,
     val align: String = "c",
     val text: String = "",
+    val radius: Float = 0f,
+    val boxW: Float = 0f,
+    val boxH: Float = 0f,
+    val kind: String = "s",
 )
 
 data class HudDrawScene(
@@ -38,23 +42,40 @@ sealed class HudPathSeg {
 object HudDraw {
     const val WIDTH = 480f
     const val HEIGHT = 640f
-    const val MAX_OPS = 32
-    const val MAX_PATH = 400
+    const val SAFE_LEFT = 64f
+    const val SAFE_RIGHT = 416f
+    const val SAFE_TOP = 56f
+    const val SAFE_BOTTOM = 552f
+    const val MAX_OPS = 48
+    const val MAX_PATH = 600
     const val MAX_TEXT = 40
-    const val MAX_JSON = 2048
+    const val MAX_JSON = 2400
 
     fun encode(scene: HudDrawScene): String {
         val ops = JSONArray()
         scene.ops.forEach { op ->
-            val item = JSONObject().put("t", op.type).put("g", op.gray.toDouble())
-            if (op.type == "path") {
-                item.put("d", op.d).put("w", op.stroke.toDouble())
-            } else {
-                item.put("x", op.x.toDouble())
+            val item = JSONObject()
+                .put("t", op.type)
+                .put("g", op.gray.toDouble())
+                .put("w", op.stroke.toDouble())
+                .put("k", op.kind)
+            when (op.type) {
+                "path" -> item.put("d", op.d)
+                "text" -> item
+                    .put("x", op.x.toDouble())
                     .put("y", op.y.toDouble())
                     .put("s", op.size.toDouble())
                     .put("a", op.align)
                     .put("v", op.text)
+                "circle" -> item
+                    .put("x", op.x.toDouble())
+                    .put("y", op.y.toDouble())
+                    .put("r", op.radius.toDouble())
+                "rect" -> item
+                    .put("x", op.x.toDouble())
+                    .put("y", op.y.toDouble())
+                    .put("rw", op.boxW.toDouble())
+                    .put("rh", op.boxH.toDouble())
             }
             ops.put(item)
         }
@@ -72,7 +93,7 @@ object HudDraw {
                 val item = arr.optJSONObject(i) ?: continue
                 sanitize(item)?.let(kept::add)
             }
-            if (kept.none { it.type == "path" }) return null
+            if (kept.none { it.type != "text" }) return null
             HudDrawScene(seq = obj.optLong("seq"), ops = kept)
         } catch (_: Exception) {
             null
@@ -86,8 +107,8 @@ object HudDraw {
         val out = ArrayList<HudPathSeg>()
         var i = 0
         var cmd = ""
-        var x = 0f
-        var y = 0f
+        var x = SAFE_LEFT
+        var y = SAFE_TOP
         while (i < tokens.size) {
             val token = tokens[i]
             if (token.length == 1 && token[0].isLetter()) {
@@ -142,9 +163,7 @@ object HudDraw {
                     out.add(HudPathSeg.Quad(clampX(n[0]), clampY(n[1]), x, y))
                     i += 4
                 }
-                "Z", "z" -> {
-                    out.add(HudPathSeg.Close)
-                }
+                "Z", "z" -> out.add(HudPathSeg.Close)
                 else -> return emptyList()
             }
         }
@@ -154,32 +173,65 @@ object HudDraw {
     private fun sanitize(item: JSONObject): HudDrawOp? {
         val type = item.optString("t")
         val gray = item.optDouble("g", 1.0).toFloat().coerceIn(0f, 1f)
+        val stroke = item.optDouble("w", 2.0).toFloat().coerceIn(0.5f, 16f)
+        val kind = kindOf(item.optString("k", "s"))
         return when (type) {
             "path" -> {
                 val d = item.optString("d").take(MAX_PATH)
                 if (parsePath(d).isEmpty()) return null
-                HudDrawOp(
-                    type = "path",
-                    d = d,
-                    stroke = item.optDouble("w", 2.0).toFloat().coerceIn(0.5f, 16f),
-                    gray = gray,
-                )
+                HudDrawOp(type = "path", d = d, stroke = stroke, gray = gray, kind = kind)
             }
             "text" -> {
                 val text = item.optString("v").replace(Regex("[\\r\\n]+"), "").trim().take(MAX_TEXT)
                 if (text.isBlank()) return null
-                val align = item.optString("a", "c").lowercase().take(1)
+                val align = item.optString("a", "c").lowercase().take(1).let {
+                    if (it == "l" || it == "r") it else "c"
+                }
+                val size = item.optDouble("s", 18.0).toFloat().coerceIn(10f, 36f)
                 HudDrawOp(
                     type = "text",
                     gray = gray,
-                    x = clampX(item.optDouble("x").toFloat()),
+                    x = clampTextX(item.optDouble("x").toFloat(), align, text, size),
                     y = clampY(item.optDouble("y").toFloat()),
-                    size = item.optDouble("s", 18.0).toFloat().coerceIn(10f, 40f),
-                    align = if (align == "l" || align == "r") align else "c",
+                    size = size,
+                    align = align,
                     text = text,
                 )
             }
+            "circle" -> {
+                if (!item.has("r")) return null
+                var r = item.optDouble("r").toFloat().coerceIn(4f, 120f)
+                r = r.coerceAtMost((SAFE_RIGHT - SAFE_LEFT) / 2f)
+                val x = item.optDouble("x").toFloat().coerceIn(SAFE_LEFT + r, SAFE_RIGHT - r)
+                val y = item.optDouble("y").toFloat().coerceIn(SAFE_TOP + r, SAFE_BOTTOM - r)
+                HudDrawOp(type = "circle", stroke = stroke, gray = gray, x = x, y = y, radius = r, kind = kind)
+            }
+            "rect" -> {
+                if (!item.has("rw") || !item.has("rh")) return null
+                val rw = item.optDouble("rw").toFloat().coerceIn(8f, SAFE_RIGHT - SAFE_LEFT)
+                val rh = item.optDouble("rh").toFloat().coerceIn(8f, SAFE_BOTTOM - SAFE_TOP)
+                val x = item.optDouble("x").toFloat().coerceIn(SAFE_LEFT, SAFE_RIGHT - rw)
+                val y = item.optDouble("y").toFloat().coerceIn(SAFE_TOP, SAFE_BOTTOM - rh)
+                HudDrawOp(type = "rect", stroke = stroke, gray = gray, x = x, y = y, boxW = rw, boxH = rh, kind = kind)
+            }
             else -> null
+        }
+    }
+
+    private fun kindOf(raw: String): String {
+        return when (raw.lowercase()) {
+            "f", "fill" -> "f"
+            "b", "both" -> "b"
+            else -> "s"
+        }
+    }
+
+    private fun clampTextX(x: Float, align: String, text: String, size: Float): Float {
+        val half = (text.length * size * 0.52f).coerceAtLeast(size)
+        return when (align) {
+            "l" -> x.coerceIn(SAFE_LEFT, SAFE_RIGHT - 8f)
+            "r" -> x.coerceIn(SAFE_LEFT + 8f, SAFE_RIGHT)
+            else -> x.coerceIn(SAFE_LEFT + half, SAFE_RIGHT - half)
         }
     }
 
@@ -201,6 +253,6 @@ object HudDraw {
         return out
     }
 
-    private fun clampX(value: Float): Float = value.coerceIn(0f, WIDTH)
-    private fun clampY(value: Float): Float = value.coerceIn(0f, HEIGHT)
+    fun clampX(value: Float): Float = value.coerceIn(SAFE_LEFT, SAFE_RIGHT)
+    fun clampY(value: Float): Float = value.coerceIn(SAFE_TOP, SAFE_BOTTOM)
 }
