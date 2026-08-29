@@ -98,6 +98,23 @@ class ScenarioContractTest {
     }
 
     @Test
+    fun hudDrawPreferredWhenIntroducing() {
+        val prompt = AgentPrompts.BASE
+        assertTrue(prompt.contains("【镜片画面】"))
+        assertTrue(prompt.contains("draw_hud"))
+        assertTrue(prompt.contains("不要指望门店卡"))
+        assertTrue(AgentToolCatalog.DRAW_HUD.description.contains("画笔"))
+        assertTrue(AgentToolCatalog.DRAW_HUD.description.contains("介绍"))
+    }
+
+    @Test
+    fun facilityIntroUsesDrawNotDiningLayout() {
+        val prompt = AgentPrompts.BASE
+        assertTrue(prompt.contains("介绍查到的地点时用 draw_hud"))
+        assertTrue(prompt.contains("不要改写成餐饮排版"))
+    }
+
+    @Test
     fun lookAskUsesVisionNotSearch() {
         val out = runStub(
             user = "眼前是什么",

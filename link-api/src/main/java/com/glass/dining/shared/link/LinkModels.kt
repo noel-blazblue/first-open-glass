@@ -1,7 +1,5 @@
 package com.glass.dining.shared.link
 
-import com.glass.dining.shared.nav.P2pOffer
-
 enum class LinkPhase {
     Idle,
     CxrReady,

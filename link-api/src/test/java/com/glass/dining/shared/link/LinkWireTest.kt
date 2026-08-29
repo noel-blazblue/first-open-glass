@@ -1,11 +1,12 @@
-package com.glass.dining.shared.nav
+package com.glass.dining.shared.link
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class IndoorProtocolTest {
+class LinkWireTest {
     @Test
     fun waypointsRoundTrip() {
         val raw = IndoorProtocol.encodeWaypoints(
@@ -19,9 +20,9 @@ class IndoorProtocolTest {
 
     @Test
     fun hintJsonKeepsSessionAndTracking() {
-        val json = NavProtocol.hintJson(
+        val json = NavWire.hintJson(
             NavHint(
-                storeName = "海底捞",
+                storeName = "望京药店",
                 text = "沿走廊走",
                 mode = "ground",
                 sessionId = "nav-1",
@@ -29,7 +30,7 @@ class IndoorProtocolTest {
                 waypoints = "0,2.2,-1.55",
             ),
         )
-        val hint = NavProtocol.parseHint(json)
+        val hint = NavWire.parseHint(json)
         assertEquals("nav-1", hint.sessionId)
         assertEquals(IndoorProtocol.TRACK_LOST, hint.tracking)
         assertFalse(hint.visual)
@@ -38,8 +39,8 @@ class IndoorProtocolTest {
 
     @Test
     fun poseJsonRoundTrip() {
-        val json = NavProtocol.poseJson(
-            NavPose(
+        val json = PoseWire.poseJson(
+            GlassPose(
                 yaw = 12.5f,
                 pitch = -3f,
                 roll = 0.4f,
@@ -50,7 +51,7 @@ class IndoorProtocolTest {
                 tNs = 42L,
             ),
         )
-        val pose = NavProtocol.parsePose(json)!!
+        val pose = PoseWire.parsePose(json)!!
         assertEquals(12.5f, pose.yaw, 0.01f)
         assertEquals(-3f, pose.pitch, 0.01f)
         assertEquals(0.8f, pose.x, 0.01f)
@@ -62,15 +63,22 @@ class IndoorProtocolTest {
 
     @Test
     fun hudTalkPoseRoundTrip() {
-        val json = NavProtocol.cardJson(
+        val json = HudWire.cardJson(
             title = "",
-            layout = NavProtocol.LAYOUT_TALK,
+            layout = HudWire.LAYOUT_TALK,
             speech = "思考中",
             pose = "think",
         )
-        val lines = NavProtocol.parseCard(json)
+        val lines = HudWire.parseCard(json)
         assertEquals("think", lines.pose)
         assertEquals("思考中", lines.speech)
         assertTrue(lines.isTalk)
+    }
+
+    @Test
+    fun downChannelIsGenericCmd() {
+        assertEquals("rk_cmd", GlassLink.CHANNEL_DOWN)
+        assertEquals("rk_evt", GlassLink.CHANNEL_UP)
+        assertEquals("hud.draw", GlassLink.CMD_DRAW)
     }
 }

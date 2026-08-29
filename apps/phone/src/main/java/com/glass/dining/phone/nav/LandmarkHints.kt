@@ -1,7 +1,7 @@
 package com.glass.dining.phone.nav
 
 import com.glass.dining.shared.nav.LandmarkHint
-import com.glass.dining.shared.nav.NavHint
+import com.glass.dining.shared.link.NavHint
 
 fun LandmarkHint.toNavHint(): NavHint {
     return NavHint(

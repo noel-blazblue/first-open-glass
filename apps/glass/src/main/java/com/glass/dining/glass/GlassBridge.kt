@@ -3,16 +3,22 @@ package com.glass.dining.glass
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import com.glass.dining.shared.nav.HudLines
-import com.glass.dining.shared.nav.NavHint
-import com.glass.dining.shared.nav.NavProtocol
+import com.glass.dining.shared.link.HudDraw
+import com.glass.dining.shared.link.HudDrawScene
+import com.glass.dining.shared.link.HudLines
+import com.glass.dining.shared.link.NavHint
 import com.glass.dining.shared.place.PlaceWire
 import com.glass.dining.shared.place.StoreHudPayload
 import com.rokid.cxr.CXRServiceBridge
 import com.rokid.cxr.Caps
+import com.glass.dining.shared.link.GlassLink
+import com.glass.dining.shared.link.HudWire
+import com.glass.dining.shared.link.NavWire
+import com.glass.dining.shared.link.PoseWire
 
 class GlassBridge(
     private val onCard: (HudLines) -> Unit,
+    private val onDraw: (HudDrawScene) -> Unit,
     private val onStore: (StoreHudPayload) -> Unit,
     private val onHint: (NavHint) -> Unit,
     private val onCamera: (Boolean) -> Unit,
@@ -54,53 +60,57 @@ class GlassBridge(
         override fun onAudioNoise(noise: Float) = Unit
     }
 
-    private val navCallback = object : CXRServiceBridge.MsgCallback {
+    private val cmdCallback = object : CXRServiceBridge.MsgCallback {
         override fun onReceive(name: String?, args: Caps?, bytes: ByteArray?) {
             val cmd = readString(args, 0) ?: return
             Log.i(TAG, "recv $name cmd=$cmd")
             when (cmd) {
-                NavProtocol.CMD_HELLO -> sendReady()
-                NavProtocol.CMD_HUD -> {
-                    val card = NavProtocol.parseCard(readString(args, 1))
+                GlassLink.CMD_HELLO -> sendReady()
+                GlassLink.CMD_HUD -> {
+                    val card = HudWire.parseCard(readString(args, 1))
                     main.post { onCard(card) }
                 }
-                NavProtocol.CMD_STORE -> {
+                GlassLink.CMD_DRAW -> {
+                    val scene = HudDraw.parse(readString(args, 1)) ?: return
+                    main.post { onDraw(scene) }
+                }
+                GlassLink.CMD_STORE -> {
                     val payload = PlaceWire.decode(readString(args, 1))
                     if (payload != null) {
                         main.post { onStore(payload) }
                     }
                 }
-                NavProtocol.CMD_CAMERA_ON -> main.post { onCamera(true) }
-                NavProtocol.CMD_NAV_START -> {
-                    val hint = NavProtocol.parseHint(readString(args, 1))
+                GlassLink.CMD_CAMERA_ON -> main.post { onCamera(true) }
+                GlassLink.CMD_NAV_START -> {
+                    val hint = NavWire.parseHint(readString(args, 1))
                     main.post {
                         if (hint.text.isNotBlank() || hint.storeName.isNotBlank()) {
                             onHint(hint)
                         }
                     }
                 }
-                NavProtocol.CMD_NAV_UPDATE -> {
-                    val hint = NavProtocol.parseHint(readString(args, 1))
+                GlassLink.CMD_NAV_UPDATE -> {
+                    val hint = NavWire.parseHint(readString(args, 1))
                     main.post { onHint(hint) }
                 }
-                NavProtocol.CMD_CAMERA_OFF, NavProtocol.CMD_NAV_STOP -> {
+                GlassLink.CMD_CAMERA_OFF, GlassLink.CMD_NAV_STOP -> {
                     main.post { onCamera(false) }
                 }
-                NavProtocol.CMD_CAMERA_SNAP -> main.post { onSnap() }
-                NavProtocol.CMD_MIC_ON -> main.post { onMic(true) }
-                NavProtocol.CMD_MIC_OFF -> main.post { onMic(false) }
-                NavProtocol.CMD_CALIBRATE -> main.post { onCalibrate() }
-                NavProtocol.CMD_FRAME_OK -> {
+                GlassLink.CMD_CAMERA_SNAP -> main.post { onSnap() }
+                GlassLink.CMD_MIC_ON -> main.post { onMic(true) }
+                GlassLink.CMD_MIC_OFF -> main.post { onMic(false) }
+                GlassLink.CMD_CALIBRATE -> main.post { onCalibrate() }
+                GlassLink.CMD_FRAME_OK -> {
                     sendingFrame = false
                     main.post { onFrameAck() }
                 }
-                NavProtocol.CMD_RTC_START,
-                NavProtocol.CMD_RTC_STOP,
-                NavProtocol.CMD_RTC_SDP,
-                NavProtocol.CMD_RTC_ICE,
-                NavProtocol.CMD_P2P_OFFER,
-                NavProtocol.CMD_P2P_STOP,
-                NavProtocol.CMD_WIFI_KEEP,
+                GlassLink.CMD_RTC_START,
+                GlassLink.CMD_RTC_STOP,
+                GlassLink.CMD_RTC_SDP,
+                GlassLink.CMD_RTC_ICE,
+                GlassLink.CMD_P2P_OFFER,
+                GlassLink.CMD_P2P_STOP,
+                GlassLink.CMD_WIFI_KEEP,
                 -> main.post { onRtc(cmd, readString(args, 1)) }
             }
         }
@@ -108,15 +118,15 @@ class GlassBridge(
 
     fun start() {
         bridge.setStatusListener(statusListener)
-        val code = bridge.subscribe(NavProtocol.CHANNEL_DOWN, navCallback)
-        Log.i(TAG, "subscribe ${NavProtocol.CHANNEL_DOWN} code=$code")
+        val code = bridge.subscribe(GlassLink.CHANNEL_DOWN, cmdCallback)
+        Log.i(TAG, "subscribe ${GlassLink.CHANNEL_DOWN} code=$code")
         sendReady()
     }
 
     fun sendReady() {
         val caps = Caps()
-        caps.write(NavProtocol.CMD_READY)
-        val result = bridge.sendMessage(NavProtocol.CHANNEL_UP, caps)
+        caps.write(GlassLink.CMD_READY)
+        val result = bridge.sendMessage(GlassLink.CHANNEL_UP, caps)
         Log.i(TAG, "send ready result=$result")
     }
 
@@ -126,31 +136,31 @@ class GlassBridge(
         if (!json.isNullOrBlank()) {
             caps.write(json)
         }
-        val result = bridge.sendMessage(NavProtocol.CHANNEL_UP, caps)
-        if (cmd != NavProtocol.CMD_RTC_ICE) {
+        val result = bridge.sendMessage(GlassLink.CHANNEL_UP, caps)
+        if (cmd != GlassLink.CMD_RTC_ICE) {
             Log.i(TAG, "send rtc $cmd code=$result bytes=${json?.length ?: 0}")
         }
     }
 
     fun sendError(message: String) {
         val caps = Caps()
-        caps.write(NavProtocol.CMD_ERROR)
+        caps.write(GlassLink.CMD_ERROR)
         caps.write(message)
-        bridge.sendMessage(NavProtocol.CHANNEL_UP, caps)
+        bridge.sendMessage(GlassLink.CHANNEL_UP, caps)
     }
 
-    fun sendPose(pose: com.glass.dining.shared.nav.NavPose) {
+    fun sendPose(pose: com.glass.dining.shared.link.GlassPose) {
         val caps = Caps()
-        caps.write(NavProtocol.CMD_POSE)
-        caps.write(NavProtocol.poseJson(pose))
-        bridge.sendMessage(NavProtocol.CHANNEL_UP, caps)
+        caps.write(GlassLink.CMD_POSE)
+        caps.write(PoseWire.poseJson(pose))
+        bridge.sendMessage(GlassLink.CHANNEL_UP, caps)
     }
 
     fun sendPcm(pcm: ByteArray): Boolean {
         val caps = Caps()
-        caps.write(NavProtocol.CMD_PCM)
+        caps.write(GlassLink.CMD_PCM)
         caps.write(pcm)
-        val result = bridge.sendMessage(NavProtocol.CHANNEL_UP, caps)
+        val result = bridge.sendMessage(GlassLink.CHANNEL_UP, caps)
         if (result != 0) {
             Log.w(TAG, "send pcm failed code=$result bytes=${pcm.size}")
             return false
@@ -162,9 +172,9 @@ class GlassBridge(
         if (sendingFrame) return false
         sendingFrame = true
         val caps = Caps()
-        caps.write(NavProtocol.CMD_FRAME)
+        caps.write(GlassLink.CMD_FRAME)
         caps.write(jpeg)
-        val result = bridge.sendMessage(NavProtocol.CHANNEL_UP, caps)
+        val result = bridge.sendMessage(GlassLink.CHANNEL_UP, caps)
         if (result != 0) {
             sendingFrame = false
             Log.w(TAG, "send frame failed code=$result bytes=${jpeg.size}")

@@ -5,6 +5,7 @@ import com.glass.dining.phone.PhoneUiState
 import com.glass.dining.phone.nav.GeoPoint
 import com.glass.dining.shared.agent.SceneObservation
 import com.glass.dining.shared.hud.HudCard
+import com.glass.dining.shared.link.HudDrawScene
 import com.glass.dining.shared.model.MatchResult
 import com.glass.dining.shared.place.PlaceProfile
 import com.glass.dining.shared.session.DiningSession
@@ -36,6 +37,7 @@ interface PhoneWorld {
     fun publishStore(place: PlaceProfile, status: String, intent: String, caption: String = "")
     fun publishTalk(speak: String, tts: Boolean)
     fun showCard(card: HudCard)
+    fun showDraw(scene: HudDrawScene)
     fun rememberSpokenStore()
     fun rememberVisionStore(id: String)
     fun bindPlace(place: PlaceProfile): MatchResult

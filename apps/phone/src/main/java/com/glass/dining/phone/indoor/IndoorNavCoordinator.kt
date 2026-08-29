@@ -17,13 +17,13 @@ import com.glass.dining.shared.indoor.SemanticObservation
 import com.glass.dining.shared.indoor.TopologyBuilder
 import com.glass.dining.shared.indoor.TrackQuality
 import com.glass.dining.shared.indoor.Vec3
-import com.glass.dining.shared.nav.IndoorProtocol
+import com.glass.dining.shared.link.IndoorProtocol
 import com.glass.dining.shared.nav.LandmarkGoal
 import com.glass.dining.shared.nav.LandmarkPlanner
 import com.glass.dining.shared.nav.LandmarkStage
 import com.glass.dining.shared.nav.LandmarkWorld
-import com.glass.dining.shared.nav.NavHint
-import com.glass.dining.shared.nav.NavPose
+import com.glass.dining.shared.link.NavHint
+import com.glass.dining.shared.link.GlassPose
 import com.glass.dining.shared.vision.LocalExtract
 
 class IndoorNavCoordinator {
@@ -76,7 +76,7 @@ class IndoorNavCoordinator {
         }
     }
 
-    fun onPose(pose: NavPose) {
+    fun onPose(pose: GlassPose) {
         synchronized(lock) {
             lastPose = Pose3(
                 tNs = pose.tNs,

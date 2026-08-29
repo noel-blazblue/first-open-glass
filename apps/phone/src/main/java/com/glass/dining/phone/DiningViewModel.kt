@@ -17,6 +17,7 @@ import com.glass.dining.phone.agent.PhoneWorld
 import com.glass.dining.phone.hud.CxrHud
 import com.glass.dining.phone.tools.CommerceToolProvider
 import com.glass.dining.phone.tools.DiningToolProvider
+import com.glass.dining.phone.tools.HudDrawToolProvider
 import com.glass.dining.phone.tools.NavigationToolProvider
 import com.glass.dining.phone.tools.ToolRegistry
 import com.glass.dining.phone.tools.VisionToolProvider
@@ -57,8 +58,7 @@ import com.glass.dining.shared.model.MatchResult
 import com.glass.dining.shared.model.MenuItem
 import com.glass.dining.shared.model.QaResult
 import com.glass.dining.shared.model.Store
-import com.glass.dining.shared.nav.NavHint
-import com.glass.dining.shared.nav.NavProtocol
+import com.glass.dining.shared.link.NavHint
 import com.glass.dining.shared.vision.VisionDecision
 import com.glass.dining.shared.vision.VisionIntent
 import com.glass.dining.shared.vision.VisionOutcome
@@ -165,6 +165,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         VisionToolProvider(runtime).register(registry)
         NavigationToolProvider(runtime).register(registry)
         CommerceToolProvider(runtime).register(registry)
+        HudDrawToolProvider(runtime).register(registry)
         registry.onTool = { name -> storePanel.noteTool(name) }
     }
     private val link = VisionLinkCoordinator(
@@ -1486,6 +1487,9 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }
         override fun showCard(card: HudCard) {
             main.post { CxrLinkHost.showCard(card) }
+        }
+        override fun showDraw(scene: com.glass.dining.shared.link.HudDrawScene) {
+            main.post { CxrLinkHost.showDraw(scene) }
         }
         override fun rememberSpokenStore() = this@DiningViewModel.rememberSpokenStore()
         override fun rememberVisionStore(id: String) = this@DiningViewModel.rememberVisionStore(id)

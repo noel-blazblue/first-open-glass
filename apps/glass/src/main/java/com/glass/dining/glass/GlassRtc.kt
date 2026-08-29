@@ -4,8 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
-import com.glass.dining.shared.nav.NavPose
-import com.glass.dining.shared.nav.NavProtocol
+import com.glass.dining.shared.link.GlassPose
 import com.glass.dining.glass.spatial.CameraFrameHub
 import com.glass.dining.glass.spatial.HubVideoCapturer
 import com.glass.dining.glass.spatial.RtcPoseSender
@@ -27,6 +26,9 @@ import org.webrtc.VideoCapturer
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
 import java.util.concurrent.CopyOnWriteArrayList
+import com.glass.dining.shared.link.GlassLink
+import com.glass.dining.shared.link.PoseWire
+import com.glass.dining.shared.link.MediaWire
 
 /**
  * 眼镜侧 WebRTC 探针：Camera2 → H.264 → 对端。
@@ -36,7 +38,7 @@ object GlassRtc {
     @Volatile var active: Boolean = false
         private set
 
-    private val sdpParts = NavProtocol.SdpAssembler()
+    private val sdpParts = MediaWire.SdpAssembler()
     private val pendingIce = CopyOnWriteArrayList<IceCandidate>()
     private val rtcThread = HandlerThread("glass-rtc").apply { start() }
     private val rtc = Handler(rtcThread.looper)
@@ -74,7 +76,7 @@ object GlassRtc {
 
     fun onRemoteIce(raw: String?) {
         rtc.post {
-            val parsed = NavProtocol.parseRtcIce(raw) ?: return@post
+            val parsed = MediaWire.parseRtcIce(raw) ?: return@post
             val ice = IceCandidate(parsed.first, parsed.second, parsed.third)
             val peer = pc
             if (peer != null && remoteSet) {
@@ -85,7 +87,7 @@ object GlassRtc {
         }
     }
 
-    fun sendPose(pose: NavPose): Boolean {
+    fun sendPose(pose: GlassPose): Boolean {
         if (!poseSender.open) return false
         rtc.post { poseSender.send(pose) }
         return true
@@ -93,7 +95,7 @@ object GlassRtc {
 
     private fun startOnRtc(context: Context, hub: CameraFrameHub) {
         if (active) {
-            emit(NavProtocol.CMD_RTC_READY, null)
+            emit(GlassLink.CMD_RTC_READY, null)
             return
         }
         try {
@@ -104,12 +106,12 @@ object GlassRtc {
             pc = peer
             startCamera(context, peerFactory, peer, hub)
             active = true
-            emit(NavProtocol.CMD_RTC_READY, null)
-            emit(NavProtocol.CMD_RTC_STAT, """{"ice":"new","side":"glass"}""")
+            emit(GlassLink.CMD_RTC_READY, null)
+            emit(GlassLink.CMD_RTC_STAT, """{"ice":"new","side":"glass"}""")
             Log.i(TAG, "rtc started")
         } catch (error: Exception) {
             Log.w(TAG, "rtc start failed", error)
-            emit(NavProtocol.CMD_ERROR, "视频流启动失败: ${error.message}")
+            emit(GlassLink.CMD_ERROR, "视频流启动失败: ${error.message}")
             stopOnRtc()
         }
     }
@@ -171,17 +173,17 @@ object GlassRtc {
         val texture = SurfaceTextureHelper.create("glass-rtc-tex", egl!!.eglBaseContext)
         val videoSource = peerFactory.createVideoSource(false)
         nextCapturer.initialize(texture, context, videoSource.capturerObserver)
-        videoSource.adaptOutputFormat(NavProtocol.RTC_WIDTH, NavProtocol.RTC_HEIGHT, NavProtocol.RTC_FPS)
-        nextCapturer.startCapture(NavProtocol.RTC_WIDTH, NavProtocol.RTC_HEIGHT, NavProtocol.RTC_FPS)
+        videoSource.adaptOutputFormat(MediaWire.RTC_WIDTH, MediaWire.RTC_HEIGHT, MediaWire.RTC_FPS)
+        nextCapturer.startCapture(MediaWire.RTC_WIDTH, MediaWire.RTC_HEIGHT, MediaWire.RTC_FPS)
         val videoTrack = peerFactory.createVideoTrack("glass-v", videoSource)
         videoTrack.setEnabled(true)
         peer.addTrack(videoTrack, listOf("glass"))
         peer.senders.firstOrNull { it.track()?.kind() == "video" }?.let { sender ->
             val params = sender.parameters
             params.encodings.firstOrNull()?.let { encoding ->
-                encoding.maxBitrateBps = NavProtocol.RTC_MAX_BITRATE
-                encoding.minBitrateBps = NavProtocol.RTC_MIN_BITRATE
-                encoding.maxFramerate = NavProtocol.RTC_FPS
+                encoding.maxBitrateBps = MediaWire.RTC_MAX_BITRATE
+                encoding.minBitrateBps = MediaWire.RTC_MIN_BITRATE
+                encoding.maxFramerate = MediaWire.RTC_FPS
                 encoding.scaleResolutionDownBy = 1.0
             }
             sender.parameters = params
@@ -190,7 +192,7 @@ object GlassRtc {
         helper = texture
         source = videoSource
         track = videoTrack
-        Log.i(TAG, "hub camera ${NavProtocol.RTC_WIDTH}x${NavProtocol.RTC_HEIGHT}@${NavProtocol.RTC_FPS}")
+        Log.i(TAG, "hub camera ${MediaWire.RTC_WIDTH}x${MediaWire.RTC_HEIGHT}@${MediaWire.RTC_FPS}")
     }
 
     private fun applyRemoteSdp(type: String, sdp: String) {
@@ -210,7 +212,7 @@ object GlassRtc {
                 }
             }
             override fun onSetFailure(error: String?) {
-                emit(NavProtocol.CMD_ERROR, "眼镜 setRemote 失败: $error")
+                emit(GlassLink.CMD_ERROR, "眼镜 setRemote 失败: $error")
             }
         }, SessionDescription(kind, sdp))
     }
@@ -226,19 +228,19 @@ object GlassRtc {
                 peer.setLocalDescription(object : EmptySdp() {
                     override fun onSetSuccess() = sendSdp(desc)
                     override fun onSetFailure(error: String?) {
-                        emit(NavProtocol.CMD_ERROR, "眼镜 setLocal 失败: $error")
+                        emit(GlassLink.CMD_ERROR, "眼镜 setLocal 失败: $error")
                     }
                 }, desc)
             }
             override fun onCreateFailure(error: String?) {
-                emit(NavProtocol.CMD_ERROR, "眼镜 createAnswer 失败: $error")
+                emit(GlassLink.CMD_ERROR, "眼镜 createAnswer 失败: $error")
             }
         }, constraints)
     }
 
     private fun sendSdp(desc: SessionDescription) {
-        NavProtocol.rtcSdpChunks(desc.type.canonicalForm(), desc.description).forEach { chunk ->
-            emit(NavProtocol.CMD_RTC_SDP, chunk)
+        MediaWire.rtcSdpChunks(desc.type.canonicalForm(), desc.description).forEach { chunk ->
+            emit(GlassLink.CMD_RTC_SDP, chunk)
         }
     }
 
@@ -271,10 +273,10 @@ object GlassRtc {
         override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
             val name = state?.name ?: return
             Log.i(TAG, "ice $name")
-            emit(NavProtocol.CMD_RTC_STAT, """{"ice":"$name","side":"glass"}""")
+            emit(GlassLink.CMD_RTC_STAT, """{"ice":"$name","side":"glass"}""")
             if (state == PeerConnection.IceConnectionState.FAILED) {
                 emit(
-                    NavProtocol.CMD_ERROR,
+                    GlassLink.CMD_ERROR,
                     "ICE 失败，Direct 没通，RTP 过不来。",
                 )
             }
@@ -287,8 +289,8 @@ object GlassRtc {
             candidate ?: return
             Log.i(TAG, "local ice ${candidate.sdp}")
             emit(
-                NavProtocol.CMD_RTC_ICE,
-                NavProtocol.rtcIceJson(candidate.sdpMid, candidate.sdpMLineIndex, candidate.sdp),
+                GlassLink.CMD_RTC_ICE,
+                MediaWire.rtcIceJson(candidate.sdpMid, candidate.sdpMLineIndex, candidate.sdp),
             )
         }
         override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) = Unit
@@ -296,7 +298,7 @@ object GlassRtc {
         override fun onRemoveStream(stream: MediaStream?) = Unit
         override fun onDataChannel(channel: DataChannel?) {
             val next = channel ?: return
-            if (next.label() != NavProtocol.DC_POSE) return
+            if (next.label() != PoseWire.DC_POSE) return
             poseSender.attach(next)
         }
         override fun onRenegotiationNeeded() = Unit

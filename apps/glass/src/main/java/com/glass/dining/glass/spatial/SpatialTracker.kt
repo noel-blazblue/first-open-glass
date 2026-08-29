@@ -5,7 +5,7 @@ import com.glass.dining.shared.indoor.TrackQuality
 import com.glass.dining.shared.indoor.Vec3
 import com.glass.dining.shared.indoor.VisualInertialFilter
 import com.glass.dining.shared.indoor.VisualSample
-import com.glass.dining.shared.nav.NavPose
+import com.glass.dining.shared.link.GlassPose
 import com.glass.dining.shared.vision.ImageQuality
 
 class SpatialTracker {
@@ -28,9 +28,9 @@ class SpatialTracker {
     fun pose(): Pose3 = filter.pose()
     fun quality(): TrackQuality = filter.quality()
 
-    fun navPose(): NavPose {
+    fun navPose(): GlassPose {
         val p = filter.pose()
-        return NavPose(
+        return GlassPose(
             yaw = p.yawDeg,
             pitch = p.pitchDeg,
             roll = p.rollDeg,

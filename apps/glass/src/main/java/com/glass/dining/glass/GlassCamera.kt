@@ -18,9 +18,9 @@ import android.os.HandlerThread
 import android.util.Log
 import android.util.Size
 import android.view.Surface
-import com.glass.dining.shared.nav.NavProtocol
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
+import com.glass.dining.shared.link.MediaWire
 
 class GlassCamera(private val context: Context) {
     private val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -55,7 +55,7 @@ class GlassCamera(private val context: Context) {
         val map = manager.getCameraCharacteristics(cameraId)
             .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             ?: return "相机无输出配置".also { lastError = it }
-        val jpegSize = pickSize(map.getOutputSizes(ImageFormat.JPEG), NavProtocol.JPEG_WIDTH, NavProtocol.JPEG_HEIGHT)
+        val jpegSize = pickSize(map.getOutputSizes(ImageFormat.JPEG), MediaWire.JPEG_WIDTH, MediaWire.JPEG_HEIGHT)
         val previewSize = pickSize(map.getOutputSizes(SurfaceTexture::class.java), 320, 240)
         val camThread = HandlerThread("nav-cam")
         camThread.start()
@@ -165,7 +165,7 @@ class GlassCamera(private val context: Context) {
         return try {
             val still = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
             still.addTarget(jpegSurface)
-            still.set(CaptureRequest.JPEG_QUALITY, NavProtocol.JPEG_QUALITY.toByte())
+            still.set(CaptureRequest.JPEG_QUALITY, MediaWire.JPEG_QUALITY.toByte())
             captureSession.capture(still.build(), null, camHandler)
             true
         } catch (error: Exception) {

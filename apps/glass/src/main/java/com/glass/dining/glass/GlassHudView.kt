@@ -14,14 +14,15 @@ import com.glass.dining.shared.hud.TalkPose
 import com.glass.dining.shared.indoor.OccupancyGrid
 import com.glass.dining.shared.indoor.Pose3
 import com.glass.dining.shared.indoor.TrackQuality
-import com.glass.dining.shared.nav.HudLines
-import com.glass.dining.shared.nav.NavProtocol
+import com.glass.dining.shared.link.HudDrawScene
+import com.glass.dining.shared.link.HudLines
 import com.glass.dining.shared.place.PlaceProfile
 import com.glass.dining.glass.spatial.SensorProbe
 import com.glass.dining.glass.spatial.WorldAnchorRenderer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.glass.dining.shared.link.HudWire
 
 class GlassHudView @JvmOverloads constructor(
     context: Context,
@@ -29,6 +30,7 @@ class GlassHudView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     @Volatile var card: HudLines = HudLines.idle()
+    @Volatile var draw: HudDrawScene? = null
     @Volatile var store: PlaceProfile? = null
     @Volatile var storeCaption: String = ""
     @Volatile var status: String = ""
@@ -77,7 +79,9 @@ class GlassHudView @JvmOverloads constructor(
         val h = height.toFloat()
         val cx = w / 2f
         val shown = store
+        val scene = draw
         when {
+            scene != null -> HudDrawRenderer.draw(canvas, scene, w, h)
             card.isNav -> drawNav(canvas, cx, w, h)
             shown != null -> StoreDetailHud.draw(canvas, shown, storeCaption, w, h)
             card.isTalk -> drawTalk(canvas, cx, w, h)
@@ -101,7 +105,7 @@ class GlassHudView @JvmOverloads constructor(
     private fun drawTalk(canvas: Canvas, cx: Float, w: Float, h: Float) {
         val size = TalkLayout.characterSize(w, h)
         val cy = TalkLayout.characterCenterY(h)
-        val lines = NavProtocol.wrapSpeech(card.speech)
+        val lines = HudWire.wrapSpeech(card.speech)
         green.textSize = TalkLayout.TEXT_SIZE_PX
         green.textAlign = Paint.Align.CENTER
         val textBottom = TalkLayout.textBaselineY(w, h, green.fontMetrics.descent)
@@ -211,7 +215,7 @@ class GlassHudView @JvmOverloads constructor(
         val gap = 36f
         green.textAlign = Paint.Align.CENTER
         green.textSize = 22f
-        canvas.drawText(card.title.ifBlank { "到店餐饮" }, cx, top, green)
+        if (card.title.isNotBlank()) canvas.drawText(card.title, cx, top, green)
         green.textSize = 18f
         if (card.meta.isNotBlank()) canvas.drawText(card.meta, cx, top + gap, green)
         if (card.wait.isNotBlank()) canvas.drawText(card.wait, cx, top + gap * 2, green)

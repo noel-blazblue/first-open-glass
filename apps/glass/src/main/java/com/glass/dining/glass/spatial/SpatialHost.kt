@@ -8,7 +8,7 @@ import com.glass.dining.shared.indoor.Pose3
 import com.glass.dining.shared.indoor.PoseSendCursor
 import com.glass.dining.shared.indoor.PoseSendGate
 import com.glass.dining.shared.indoor.TrackQuality
-import com.glass.dining.shared.nav.NavPose
+import com.glass.dining.shared.link.GlassPose
 
 class SpatialHost(private val context: Context) {
     val hub = CameraFrameHub(context)
@@ -66,7 +66,7 @@ class SpatialHost(private val context: Context) {
         if (raw == TrackQuality.GOOD) everGood = true
         return if (raw == TrackQuality.LOST && !everGood) TrackQuality.WEAK else raw
     }
-    fun navPose(): NavPose {
+    fun navPose(): GlassPose {
         val pose = tracker.navPose()
         return pose.copy(tracking = quality().name.lowercase())
     }

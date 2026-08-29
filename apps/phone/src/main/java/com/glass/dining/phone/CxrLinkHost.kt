@@ -6,8 +6,7 @@ import android.os.Looper
 import android.util.Log
 import com.glass.dining.phone.hud.CxrHud
 import com.glass.dining.shared.hud.HudCard
-import com.glass.dining.shared.nav.NavHint
-import com.glass.dining.shared.nav.NavProtocol
+import com.glass.dining.shared.link.NavHint
 import com.glass.dining.shared.place.PlaceProfile
 import com.rokid.cxr.Caps
 import com.rokid.cxr.link.CXRLink
@@ -16,6 +15,9 @@ import com.rokid.cxr.link.callbacks.ICXRLinkCbk
 import com.rokid.cxr.link.callbacks.ICustomCmdCbk
 import com.rokid.cxr.link.utils.CxrDefs
 import com.rokid.cxr.link.utils.GlassInfo
+import com.glass.dining.shared.link.GlassLink
+import com.glass.dining.shared.link.NavWire
+import com.glass.dining.shared.link.PoseWire
 
 object CxrLinkHost {
     const val TAG = "GlassDiningPhone"
@@ -47,7 +49,7 @@ object CxrLinkHost {
     var onGlassReady: (() -> Unit)? = null
     var onGlassLost: (() -> Unit)? = null
     var onFrame: ((ByteArray) -> Unit)? = null
-    var onPose: ((com.glass.dining.shared.nav.NavPose) -> Unit)? = null
+    var onPose: ((com.glass.dining.shared.link.GlassPose) -> Unit)? = null
     var onRtc: ((String, String?) -> Unit)? = null
     val pcmPackets: Int
         get() = audioPackets
@@ -155,10 +157,10 @@ object CxrLinkHost {
             val cmd = readString(caps, 0) ?: return
             Log.i(TAG, "up key=$key cmd=$cmd size=${caps.size()}")
             when (cmd) {
-                NavProtocol.CMD_READY -> {
+                GlassLink.CMD_READY -> {
                     main.post { glassApp.onCmdReady() }
                 }
-                NavProtocol.CMD_PCM -> {
+                GlassLink.CMD_PCM -> {
                     val pcm = readBinary(caps, 1)
                     if (pcm != null && pcm.isNotEmpty()) {
                         audioPackets += 1
@@ -169,35 +171,35 @@ object CxrLinkHost {
                         onAudioPcm?.invoke(pcm)
                     }
                 }
-                NavProtocol.CMD_FRAME -> {
+                GlassLink.CMD_FRAME -> {
                     val jpeg = readBinary(caps, 1)
                     val waiter = photoWaiter
                     if (waiter != null) {
                         photoWaiter = null
                         main.removeCallbacks(photoTimeout)
                         main.post { waiter.invoke(jpeg, if (jpeg == null || jpeg.isEmpty()) "眼镜回了空图" else null) }
-                        sendCmd(NavProtocol.CMD_FRAME_OK)
+                        sendCmd(GlassLink.CMD_FRAME_OK)
                     } else if (jpeg != null && jpeg.isNotEmpty()) {
                         main.post { onFrame?.invoke(jpeg) }
                     } else {
-                        sendCmd(NavProtocol.CMD_FRAME_OK)
+                        sendCmd(GlassLink.CMD_FRAME_OK)
                     }
                 }
-                NavProtocol.CMD_POSE -> {
-                    val parsed = NavProtocol.parsePose(readString(caps, 1))
-                        ?: readFloat(caps, 1)?.let { com.glass.dining.shared.nav.NavPose(yaw = it) }
+                GlassLink.CMD_POSE -> {
+                    val parsed = PoseWire.parsePose(readString(caps, 1))
+                        ?: readFloat(caps, 1)?.let { com.glass.dining.shared.link.GlassPose(yaw = it) }
                     if (parsed != null) main.post { onPose?.invoke(parsed) }
                 }
-                NavProtocol.CMD_ERROR -> {
+                GlassLink.CMD_ERROR -> {
                     val msg = readString(caps, 1).orEmpty()
                     main.post { onStatus?.invoke("眼镜: $msg") }
                 }
-                NavProtocol.CMD_RTC_READY,
-                NavProtocol.CMD_RTC_SDP,
-                NavProtocol.CMD_RTC_ICE,
-                NavProtocol.CMD_RTC_STAT,
-                NavProtocol.CMD_P2P_READY,
-                NavProtocol.CMD_P2P_FAIL,
+                GlassLink.CMD_RTC_READY,
+                GlassLink.CMD_RTC_SDP,
+                GlassLink.CMD_RTC_ICE,
+                GlassLink.CMD_RTC_STAT,
+                GlassLink.CMD_P2P_READY,
+                GlassLink.CMD_P2P_FAIL,
                 -> {
                     val payload = readString(caps, 1)
                     main.post { onRtc?.invoke(cmd, payload) }
@@ -234,7 +236,7 @@ object CxrLinkHost {
             val configured = configCXRSession(
                 CxrDefs.CXRSession(
                     CxrDefs.CXRSessionType.CUSTOMAPP,
-                    NavProtocol.GLASS_PACKAGE,
+                    GlassLink.GLASS_PACKAGE,
                 ),
             )
             if (!configured) {
@@ -253,7 +255,7 @@ object CxrLinkHost {
             Log.w(TAG, "CXRLink.connect failed", error)
             return "connect 异常: ${error.message}"
         }
-        Log.i(TAG, "CXRLink.connect CUSTOMAPP started=$started pkg=${NavProtocol.GLASS_PACKAGE}")
+        Log.i(TAG, "CXRLink.connect CUSTOMAPP started=$started pkg=${GlassLink.GLASS_PACKAGE}")
         return if (started) {
             "正在通过乐奇连接眼镜…"
         } else {
@@ -277,7 +279,7 @@ object CxrLinkHost {
         if (!capturingAudio) {
             audioPackets = 0
         }
-        sendCmd(NavProtocol.CMD_MIC_ON)
+        sendCmd(GlassLink.CMD_MIC_ON)
         Log.i(TAG, "mic.on sent packets=$audioPackets")
         return "已打开眼镜麦克风"
     }
@@ -285,7 +287,7 @@ object CxrLinkHost {
     fun stopGlassMic() {
         wantAudio = false
         capturingAudio = false
-        sendCmd(NavProtocol.CMD_MIC_OFF)
+        sendCmd(GlassLink.CMD_MIC_OFF)
         try {
             sharedLink?.stopAudioStream()
         } catch (_: Exception) {
@@ -306,13 +308,17 @@ object CxrLinkHost {
             photoWaiter = onResult
             main.removeCallbacks(photoTimeout)
             main.postDelayed(photoTimeout, 12_000)
-            sendCmd(NavProtocol.CMD_CAMERA_SNAP)
+            sendCmd(GlassLink.CMD_CAMERA_SNAP)
             Log.i(TAG, "camera.snap issued")
         }
     }
 
     fun showCard(card: HudCard) {
         CxrHud.showCard(card)
+    }
+
+    fun showDraw(scene: com.glass.dining.shared.link.HudDrawScene) {
+        CxrHud.showDraw(scene)
     }
 
     fun showStore(place: PlaceProfile, caption: String = "") {
@@ -324,19 +330,19 @@ object CxrLinkHost {
     }
 
     fun startNav(hint: NavHint) {
-        sendCmd(NavProtocol.CMD_NAV_START, NavProtocol.hintJson(hint))
+        sendCmd(GlassLink.CMD_NAV_START, NavWire.hintJson(hint))
     }
 
     fun updateHint(hint: NavHint) {
-        sendCmd(NavProtocol.CMD_NAV_UPDATE, NavProtocol.hintJson(hint))
+        sendCmd(GlassLink.CMD_NAV_UPDATE, NavWire.hintJson(hint))
     }
 
     fun stopNav() {
-        sendCmd(NavProtocol.CMD_NAV_STOP)
+        sendCmd(GlassLink.CMD_NAV_STOP)
     }
 
     fun ackFrame() {
-        sendCmd(NavProtocol.CMD_FRAME_OK)
+        sendCmd(GlassLink.CMD_FRAME_OK)
     }
 
     fun sendRtc(cmd: String, json: String? = null) {
@@ -362,8 +368,8 @@ object CxrLinkHost {
     }
 
     fun sendHelloAndWifi() {
-        sendCmd(NavProtocol.CMD_HELLO)
-        sendCmd(NavProtocol.CMD_WIFI_KEEP)
+        sendCmd(GlassLink.CMD_HELLO)
+        sendCmd(GlassLink.CMD_WIFI_KEEP)
     }
 
     fun linkReady(): Boolean = cxrConnected && glassBtConnected && sharedLink != null
@@ -380,7 +386,7 @@ object CxrLinkHost {
             caps.write(json)
         }
         val code = try {
-            link.sendCustomCmd(NavProtocol.CHANNEL_DOWN, caps)
+            link.sendCustomCmd(GlassLink.CHANNEL_DOWN, caps)
         } catch (error: Exception) {
             Log.w(TAG, "sendCustomCmd failed cmd=$cmd", error)
             null

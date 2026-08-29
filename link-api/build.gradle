@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace "com.glass.dining.nav"
+    namespace "com.glass.dining.link"
     compileSdk 34
 
     defaultConfig {

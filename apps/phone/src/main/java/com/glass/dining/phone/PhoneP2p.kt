@@ -14,7 +14,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.glass.dining.shared.link.P2pJoinPolicy
-import com.glass.dining.shared.nav.P2pOffer
+import com.glass.dining.shared.link.P2pOffer
 import java.net.NetworkInterface
 
 /**

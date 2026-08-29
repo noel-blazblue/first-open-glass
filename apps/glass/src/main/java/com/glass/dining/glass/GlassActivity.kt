@@ -7,10 +7,11 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.WindowManager
-import com.glass.dining.shared.nav.HudLines
-import com.glass.dining.shared.nav.NavHint
-import com.glass.dining.shared.nav.NavProtocol
+import com.glass.dining.shared.link.HudLines
+import com.glass.dining.shared.link.NavHint
 import com.glass.dining.glass.spatial.SpatialHost
+import com.glass.dining.shared.link.GlassLink
+import com.glass.dining.shared.link.MediaWire
 
 class GlassActivity : android.app.Activity() {
     private val main = Handler(Looper.getMainLooper())
@@ -43,7 +44,7 @@ class GlassActivity : android.app.Activity() {
     private val poseTick = object : Runnable {
         override fun run() {
             maybeSendPose()
-            val gap = if (GlassRtc.poseOpen) NavProtocol.POSE_WIFI_TICK_MS else 1_000L
+            val gap = if (GlassRtc.poseOpen) MediaWire.POSE_WIFI_TICK_MS else 1_000L
             main.postDelayed(this, gap)
         }
     }
@@ -69,7 +70,7 @@ class GlassActivity : android.app.Activity() {
                 }
             }
             if (navActive) {
-                main.postDelayed(this, NavProtocol.FRAME_INTERVAL_MS)
+                main.postDelayed(this, MediaWire.FRAME_INTERVAL_MS)
             }
         }
     }
@@ -108,12 +109,23 @@ class GlassActivity : android.app.Activity() {
         }
         bridge = GlassBridge(
             onCard = { lines ->
+                hud.draw = null
                 hud.card = lines
                 hud.store = null
                 hud.storeCaption = ""
                 hud.invalidate()
             },
+            onDraw = { scene ->
+                val newer = scene.seq == 0L || scene.seq > (hud.draw?.seq ?: 0L)
+                if (newer) {
+                    hud.draw = scene
+                    hud.store = null
+                    hud.storeCaption = ""
+                    hud.invalidate()
+                }
+            },
             onStore = { payload ->
+                hud.draw = null
                 hud.store = payload.place
                 hud.storeCaption = payload.caption
                 hud.invalidate()
@@ -227,6 +239,7 @@ class GlassActivity : android.app.Activity() {
     }
 
     private fun showHint(hint: NavHint) {
+        hud.draw = null
         hud.card = HudLines.fromHint(hint)
         hud.invalidate()
     }
@@ -245,20 +258,20 @@ class GlassActivity : android.app.Activity() {
 
     private fun handleRtc(cmd: String, json: String?) {
         when (cmd) {
-            NavProtocol.CMD_P2P_OFFER -> joinP2p(json)
-            NavProtocol.CMD_P2P_STOP -> GlassP2p.stop()
-            NavProtocol.CMD_WIFI_KEEP -> GlassWifi.ensure()
-            NavProtocol.CMD_RTC_START -> startRtc()
-            NavProtocol.CMD_RTC_STOP -> stopRtc()
-            NavProtocol.CMD_RTC_SDP -> GlassRtc.onRemoteSdp(json)
-            NavProtocol.CMD_RTC_ICE -> GlassRtc.onRemoteIce(json)
+            GlassLink.CMD_P2P_OFFER -> joinP2p(json)
+            GlassLink.CMD_P2P_STOP -> GlassP2p.stop()
+            GlassLink.CMD_WIFI_KEEP -> GlassWifi.ensure()
+            GlassLink.CMD_RTC_START -> startRtc()
+            GlassLink.CMD_RTC_STOP -> stopRtc()
+            GlassLink.CMD_RTC_SDP -> GlassRtc.onRemoteSdp(json)
+            GlassLink.CMD_RTC_ICE -> GlassRtc.onRemoteIce(json)
         }
     }
 
     private fun joinP2p(json: String?) {
-        val offer = NavProtocol.parseP2pOffer(json)
+        val offer = MediaWire.parseP2pOffer(json)
         if (offer == null) {
-            bridge.sendRtc(NavProtocol.CMD_P2P_FAIL, "p2p.offer 无效")
+            bridge.sendRtc(GlassLink.CMD_P2P_FAIL, "p2p.offer 无效")
             return
         }
         Log.i(TAG, "p2p join ssid=${offer.ssid}")

@@ -1,11 +1,11 @@
 package com.glass.dining.shared.link
 
-import com.glass.dining.shared.nav.NavProtocol
-import com.glass.dining.shared.nav.P2pOffer
+import com.glass.dining.shared.link.P2pOffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.glass.dining.shared.link.MediaWire
 
 class VisionLinkMachineTest {
     @Test
@@ -153,12 +153,12 @@ class VisionLinkMachineTest {
     @Test
     fun protocolKeepsAttemptId() {
         val offer = P2pOffer("DIRECT-AB", "passpass", "192.168.49.1", "aa:bb", "phone", "a9-1")
-        val parsed = NavProtocol.parseP2pOffer(NavProtocol.p2pOfferJson(offer))
+        val parsed = MediaWire.parseP2pOffer(MediaWire.p2pOfferJson(offer))
         assertEquals("a9-1", parsed?.attemptId)
-        val ready = NavProtocol.p2pReadyJson("192.168.49.2", "a9-1")
-        assertEquals("192.168.49.2", NavProtocol.parseP2pReady(ready))
-        assertEquals("a9-1", NavProtocol.parseP2pAttemptId(ready))
-        val fail = NavProtocol.parseP2pFail(NavProtocol.p2pFailJson("timeout", "a9-1"))
+        val ready = MediaWire.p2pReadyJson("192.168.49.2", "a9-1")
+        assertEquals("192.168.49.2", MediaWire.parseP2pReady(ready))
+        assertEquals("a9-1", MediaWire.parseP2pAttemptId(ready))
+        val fail = MediaWire.parseP2pFail(MediaWire.p2pFailJson("timeout", "a9-1"))
         assertEquals("timeout", fail.first)
         assertEquals("a9-1", fail.second)
     }

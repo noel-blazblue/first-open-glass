@@ -13,9 +13,10 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.glass.dining.shared.link.P2pJoinPolicy
-import com.glass.dining.shared.nav.NavProtocol
-import com.glass.dining.shared.nav.P2pOffer
+import com.glass.dining.shared.link.P2pOffer
 import java.net.NetworkInterface
+import com.glass.dining.shared.link.GlassLink
+import com.glass.dining.shared.link.MediaWire
 
 /**
  * 眼镜加入手机 Direct GO。唯一产品路径：原生 WifiP2pManager.discoverPeers/connect。
@@ -187,7 +188,7 @@ object GlassP2p {
     }
 
     private fun hint(message: String) {
-        send?.invoke(NavProtocol.CMD_RTC_STAT, message)
+        send?.invoke(GlassLink.CMD_RTC_STAT, message)
     }
 
     private fun ensureManager(context: Context) {
@@ -292,7 +293,7 @@ object GlassP2p {
             }
         }
         val attempt = offer?.attemptId.orEmpty()
-        send?.invoke(NavProtocol.CMD_P2P_READY, NavProtocol.p2pReadyJson(ip, attempt))
+        send?.invoke(GlassLink.CMD_P2P_READY, MediaWire.p2pReadyJson(ip, attempt))
         active = false
         reclaimHud()
         Log.i(TAG, "p2p ready ip=$ip attempt=$attempt")
@@ -303,7 +304,7 @@ object GlassP2p {
         val attempt = offer?.attemptId.orEmpty()
         val cb = send
         stopInternal(notify = true)
-        cb?.invoke(NavProtocol.CMD_P2P_FAIL, NavProtocol.p2pFailJson(message, attempt))
+        cb?.invoke(GlassLink.CMD_P2P_FAIL, MediaWire.p2pFailJson(message, attempt))
     }
 
     private fun reclaimHud() {

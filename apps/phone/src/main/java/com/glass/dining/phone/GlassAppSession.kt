@@ -4,8 +4,8 @@ import android.os.Handler
 import android.os.SystemClock
 import android.util.Log
 import com.glass.dining.shared.link.GlassForegroundPolicy
-import com.glass.dining.shared.nav.NavProtocol
 import com.rokid.cxr.link.callbacks.IGlassAppCbk
+import com.glass.dining.shared.link.GlassLink
 
 /**
  * 眼镜 CustomApp 的查询/拉起/停止。前台判定在 [GlassForegroundPolicy]。
@@ -129,8 +129,8 @@ class GlassAppSession(
 
     fun stopGlassApp() {
         val link = CxrLinkHost.sharedLink ?: return
-        CxrLinkHost.sendRtc(NavProtocol.CMD_P2P_STOP)
-        CxrLinkHost.sendRtc(NavProtocol.CMD_RTC_STOP)
+        CxrLinkHost.sendRtc(GlassLink.CMD_P2P_STOP)
+        CxrLinkHost.sendRtc(GlassLink.CMD_RTC_STOP)
         try {
             link.appStop(appCbk)
             Log.i(TAG, "appStop issued")
@@ -160,8 +160,8 @@ class GlassAppSession(
             return
         }
         try {
-            link.appStart(NavProtocol.glassEntry(), appCbk)
-            Log.i(TAG, "appStart ${NavProtocol.glassEntry()}")
+            link.appStart(GlassLink.glassEntry(), appCbk)
+            Log.i(TAG, "appStart ${GlassLink.glassEntry()}")
         } catch (error: Exception) {
             Log.w(TAG, "appStart failed", error)
             onStatus?.invoke("启动眼镜页失败: ${error.message}")

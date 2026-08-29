@@ -76,10 +76,18 @@ object AgentToolCatalog {
         ToolRisk.CONFIRM,
         parallelSafe = false,
     )
+    val DRAW_HUD = spec(
+        "draw_hud",
+        "在镜片 480×640 画布上画一帧。这是画笔不是页面类型：只传 path（SVG 子集 M/L/C/Q/Z）和 text。介绍地点、对比几家、讲资料或菜单券时优先用。g 为灰度 0～1。",
+        """{"type":"object","properties":{"ops":{"type":"array","items":{"type":"object","properties":{"t":{"type":"string","enum":["path","text"]},"d":{"type":"string"},"w":{"type":"number"},"g":{"type":"number"},"x":{"type":"number"},"y":{"type":"number"},"s":{"type":"number"},"a":{"type":"string"},"v":{"type":"string"}},"required":["t"]}},"seq":{"type":"integer"}},"required":["ops"]}""",
+        ToolRisk.WRITE,
+        parallelSafe = false,
+    )
 
     val ALL: List<ToolSpec> = listOf(
         LOOK_AT_SCENE, SEARCH_NEARBY, RESOLVE_DEST, START_NAV, STOP_NAV,
         RECOMMEND, SELECT_STORE, GET_PLACE_DETAILS, LIST_COUPONS, SCAN_COUPON, REDEEM, CHECKOUT,
+        DRAW_HUD,
     )
 
     val ALIASES = mapOf(
@@ -116,15 +124,20 @@ object AgentPrompts {
 优先级：用户明确目标 > 当前会话目标 > 下列场景引导 > 通用闲聊。
 用户明确指定了非餐饮地点或设施时，按用户的词处理，不要改成餐饮。
 
+【镜片画面】
+场景：要把看到的内容画在镜片上，而不是只靠说话。
+何时使用：介绍地点、对比几家、讲菜单/券/资料，或用户要看一眼排版。
+怎么做：先用工具拿到事实，再 draw_hud 用 path 和 text 自己排。画布 480×640，中间偏下安全区，字少、线粗，只用灰阶。只画已查到的字段，不要编数字。不要指望门店卡或四行卡会替你画。导航行进中不要 draw_hud 盖掉方向指引。口播仍短；镜片上的字和嘴里说的可以不同。
+
 【到店美食与餐饮探索】
 场景：发现餐厅、了解排队人均菜单优惠、选定要去的店。
 何时使用：用户提到餐饮品类或店名；或泛指就餐/找店，如附近有什么门店、有啥店、找店、有啥好吃的、找个地方坐坐、整点垫肚子的。
-怎么做：本地目录大于 0 家时优先 recommend；目录为空或未命中时用 search_nearby_places，把泛指改写成美食或餐厅，禁止把门店、附近、推荐当 keyword。排队、招牌、优惠、包间只有 catalog_backed 才能说。问某家店的评分、人均、营业、电话、地址时用 get_place_details，用户说了店名或第几家必须带上 name 或 place_id 或 index，不要猜搜索列表第一家；正在查看时可以不带。查到唯一一家会出门店卡，不要为此绑定导航目的地。用户要去这家才 select_store。工具返回没有的字段说没有，不要编。对用户说话不要提地图供应商名称。
+怎么做：本地目录大于 0 家时优先 recommend；目录为空或未命中时用 search_nearby_places，把泛指改写成美食或餐厅，禁止把门店、附近、推荐当 keyword。排队、招牌、优惠、包间只有 catalog_backed 才能说。问某家店的评分、人均、营业、电话、地址时用 get_place_details，用户说了店名或第几家必须带上 name 或 place_id 或 index，不要猜搜索列表第一家；正在查看时可以不带。查到事实后用 draw_hud 介绍，不要指望门店卡。不要为此绑定导航目的地。用户要去这家才 select_store。工具返回没有的字段说没有，不要编。对用户说话不要提地图供应商名称。
 
 【附近公共设施与通用地点】
 场景：找非餐饮的生活设施或公开地点。
 何时使用：用户明确说了设施或地点类型，如药店、医院、卫生间、地铁、银行、便利店。
-怎么做：search_nearby_places，keyword 用用户说的那个类型或地名，不要改写成美食。
+怎么做：search_nearby_places，keyword 用用户说的那个类型或地名，不要改写成美食。介绍查到的地点时用 draw_hud，不要改写成餐饮排版。
 
 【现实环境与视觉问答】
 场景：用户要看眼前现在是什么。

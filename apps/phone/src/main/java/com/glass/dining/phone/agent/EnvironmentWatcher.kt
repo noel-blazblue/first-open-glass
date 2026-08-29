@@ -7,7 +7,7 @@ import android.util.Log
 import com.glass.dining.phone.PhoneAi
 import com.glass.dining.phone.vision.StreamFrame
 import com.glass.dining.shared.agent.EnvironmentEpisode
-import com.glass.dining.shared.nav.NavPose
+import com.glass.dining.shared.link.GlassPose
 import com.glass.dining.shared.agent.EnvironmentEventTracker
 import com.glass.dining.shared.agent.EnvironmentLook
 import com.glass.dining.shared.agent.SpatialEvidence
@@ -54,7 +54,7 @@ object EnvironmentWatcher {
         haveYaw = true
     }
 
-    fun onPose(pose: NavPose) {
+    fun onPose(pose: GlassPose) {
         onHeading(pose.yaw)
         poseX = pose.x
         poseY = pose.y

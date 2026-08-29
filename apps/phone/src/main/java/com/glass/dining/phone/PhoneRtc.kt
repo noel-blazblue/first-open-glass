@@ -8,7 +8,6 @@ import android.os.SystemClock
 import android.util.Log
 import com.glass.dining.phone.vision.FrameJpeg
 import com.glass.dining.phone.vision.StreamVision
-import com.glass.dining.shared.nav.NavProtocol
 import com.glass.dining.shared.vision.KeyframePolicy
 import org.webrtc.DataChannel
 import org.webrtc.DefaultVideoDecoderFactory
@@ -31,6 +30,8 @@ import org.webrtc.VideoSink
 import org.webrtc.VideoTrack
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
+import com.glass.dining.shared.link.GlassLink
+import com.glass.dining.shared.link.MediaWire
 
 /**
  * 手机侧 WebRTC 探针：收眼镜 H.264，信令走 CXR。
@@ -41,10 +42,10 @@ object PhoneRtc {
 
     var onSignal: ((String, String?) -> Unit)? = null
     var onStatus: ((String) -> Unit)? = null
-    var onPose: ((com.glass.dining.shared.nav.NavPose) -> Unit)? = null
+    var onPose: ((com.glass.dining.shared.link.GlassPose) -> Unit)? = null
 
     private val main = Handler(Looper.getMainLooper())
-    private val sdpParts = NavProtocol.SdpAssembler()
+    private val sdpParts = MediaWire.SdpAssembler()
     private val pendingIce = CopyOnWriteArrayList<IceCandidate>()
     private val rtcThread = HandlerThread("phone-rtc").apply { start() }
     private val rtc = Handler(rtcThread.looper)
@@ -96,7 +97,7 @@ object PhoneRtc {
 
     fun onRemoteIce(raw: String?) {
         rtc.post {
-            val parsed = NavProtocol.parseRtcIce(raw) ?: return@post
+            val parsed = MediaWire.parseRtcIce(raw) ?: return@post
             val ice = IceCandidate(parsed.first, parsed.second, parsed.third)
             val peer = pc
             if (peer != null && remoteSet) {
@@ -292,8 +293,8 @@ object PhoneRtc {
     }
 
     private fun sendSdp(desc: SessionDescription) {
-        NavProtocol.rtcSdpChunks(desc.type.canonicalForm(), desc.description).forEach { chunk ->
-            onSignal?.invoke(NavProtocol.CMD_RTC_SDP, chunk)
+        MediaWire.rtcSdpChunks(desc.type.canonicalForm(), desc.description).forEach { chunk ->
+            onSignal?.invoke(GlassLink.CMD_RTC_SDP, chunk)
         }
         Log.i(TAG, "sent ${desc.type} bytes=${desc.description.length}")
     }
@@ -347,8 +348,8 @@ object PhoneRtc {
             candidate ?: return
             Log.i(TAG, "local ice ${candidate.sdp}")
             onSignal?.invoke(
-                NavProtocol.CMD_RTC_ICE,
-                NavProtocol.rtcIceJson(candidate.sdpMid, candidate.sdpMLineIndex, candidate.sdp),
+                GlassLink.CMD_RTC_ICE,
+                MediaWire.rtcIceJson(candidate.sdpMid, candidate.sdpMLineIndex, candidate.sdp),
             )
         }
         override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) = Unit

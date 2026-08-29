@@ -3,15 +3,15 @@ package com.glass.dining.phone
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import com.glass.dining.shared.nav.NavPose
-import com.glass.dining.shared.nav.NavProtocol
+import com.glass.dining.shared.link.GlassPose
 import org.webrtc.DataChannel
 import org.webrtc.PeerConnection
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicInteger
+import com.glass.dining.shared.link.PoseWire
 
 class RtcPoseChannel {
-    var onPose: ((NavPose) -> Unit)? = null
+    var onPose: ((GlassPose) -> Unit)? = null
     private val main = Handler(Looper.getMainLooper())
     private val received = AtomicInteger(0)
     private var channel: DataChannel? = null
@@ -21,8 +21,8 @@ class RtcPoseChannel {
             ordered = false
             maxRetransmits = 0
         }
-        val dc = peer.createDataChannel(NavProtocol.DC_POSE, init)
-            ?: throw IllegalStateException("createDataChannel ${NavProtocol.DC_POSE} 失败")
+        val dc = peer.createDataChannel(PoseWire.DC_POSE, init)
+            ?: throw IllegalStateException("createDataChannel ${PoseWire.DC_POSE} 失败")
         listen(dc)
         return dc
     }
@@ -59,12 +59,12 @@ class RtcPoseChannel {
         channel = null
     }
 
-    private fun parse(buffer: DataChannel.Buffer?): NavPose? {
+    private fun parse(buffer: DataChannel.Buffer?): GlassPose? {
         val data = buffer?.data ?: return null
         val bytes = ByteArray(data.remaining())
         data.get(bytes)
         val raw = String(bytes, StandardCharsets.UTF_8)
-        return NavProtocol.parsePose(raw)
+        return PoseWire.parsePose(raw)
     }
 
     companion object {

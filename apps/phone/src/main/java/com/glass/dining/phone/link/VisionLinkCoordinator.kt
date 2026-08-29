@@ -11,7 +11,8 @@ import com.glass.dining.shared.link.LinkPhase
 import com.glass.dining.shared.link.LinkSnapshot
 import com.glass.dining.shared.link.P2pJoinPolicy
 import com.glass.dining.shared.link.VisionLinkMachine
-import com.glass.dining.shared.nav.NavProtocol
+import com.glass.dining.shared.link.GlassLink
+import com.glass.dining.shared.link.MediaWire
 
 data class LinkUiState(
     val phase: String = LinkPhase.Idle.name,
@@ -96,9 +97,9 @@ class VisionLinkCoordinator(
 
     fun onRtc(cmd: String, json: String?) {
         when (cmd) {
-            NavProtocol.CMD_P2P_READY -> {
-                val ip = NavProtocol.parseP2pReady(json)
-                val attempt = NavProtocol.parseP2pAttemptId(json)
+            GlassLink.CMD_P2P_READY -> {
+                val ip = MediaWire.parseP2pReady(json)
+                val attempt = MediaWire.parseP2pAttemptId(json)
                 if (!P2pJoinPolicy.acceptAttempt(machine.snapshot.attemptId, attempt)) return
                 val ready = P2pJoinPolicy.readyIp(true, false, ip)
                 if (ready == null) {
@@ -107,14 +108,14 @@ class VisionLinkCoordinator(
                     apply(machine.onPeerReady(ready, attempt))
                 }
             }
-            NavProtocol.CMD_P2P_FAIL -> {
-                val parsed = NavProtocol.parseP2pFail(json)
+            GlassLink.CMD_P2P_FAIL -> {
+                val parsed = MediaWire.parseP2pFail(json)
                 apply(machine.onPeerFail(parsed.first, parsed.second))
             }
-            NavProtocol.CMD_RTC_READY -> apply(machine.onRtcReady())
-            NavProtocol.CMD_RTC_SDP -> PhoneRtc.onRemoteSdp(json)
-            NavProtocol.CMD_RTC_ICE -> PhoneRtc.onRemoteIce(json)
-            NavProtocol.CMD_RTC_STAT -> apply(machine.onStat(json.orEmpty()))
+            GlassLink.CMD_RTC_READY -> apply(machine.onRtcReady())
+            GlassLink.CMD_RTC_SDP -> PhoneRtc.onRemoteSdp(json)
+            GlassLink.CMD_RTC_ICE -> PhoneRtc.onRemoteIce(json)
+            GlassLink.CMD_RTC_STAT -> apply(machine.onStat(json.orEmpty()))
         }
     }
 
@@ -172,13 +173,13 @@ class VisionLinkCoordinator(
                 Log.i(TAG, "phase GlassStarting attempt=${effect.attemptId}")
                 CxrLinkHost.ensureGlassApp("link")
             }
-            is LinkEffect.KeepWifi -> CxrLinkHost.sendRtc(NavProtocol.CMD_WIFI_KEEP)
+            is LinkEffect.KeepWifi -> CxrLinkHost.sendRtc(GlassLink.CMD_WIFI_KEEP)
             is LinkEffect.CreateGroup -> startGroup(effect.attemptId)
             is LinkEffect.SendOffer -> {
                 Log.i(TAG, "send p2p.offer attempt=${effect.offer.attemptId} ssid=${effect.offer.ssid}")
-                CxrLinkHost.sendRtc(NavProtocol.CMD_P2P_OFFER, NavProtocol.p2pOfferJson(effect.offer))
+                CxrLinkHost.sendRtc(GlassLink.CMD_P2P_OFFER, MediaWire.p2pOfferJson(effect.offer))
             }
-            is LinkEffect.StartRtc -> CxrLinkHost.sendRtc(NavProtocol.CMD_RTC_START)
+            is LinkEffect.StartRtc -> CxrLinkHost.sendRtc(GlassLink.CMD_RTC_START)
             is LinkEffect.StartOffer -> PhoneRtc.startOffer()
             is LinkEffect.Cleanup -> cleanup()
         }
@@ -204,8 +205,8 @@ class VisionLinkCoordinator(
         main.removeCallbacks(resend)
         PhoneRtc.stop()
         PhoneP2p.stop()
-        CxrLinkHost.sendRtc(NavProtocol.CMD_RTC_STOP)
-        CxrLinkHost.sendRtc(NavProtocol.CMD_P2P_STOP)
+        CxrLinkHost.sendRtc(GlassLink.CMD_RTC_STOP)
+        CxrLinkHost.sendRtc(GlassLink.CMD_P2P_STOP)
     }
 
     private fun armTimeout(before: LinkPhase, after: LinkPhase) {

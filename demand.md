@@ -172,7 +172,7 @@ Agent 每一轮模型调用都走可取消 SSE（含 `tool_calls`）。镜片时
 | 端 | 职责 |
 | --- | --- |
 | 共享模块 `shared/` | Agent 协议、`place/` 地点句柄与资料、目录 JSON、`DiningSession` |
-| `nav-api/` | 眼镜 CustomApp 通道与 HUD/导航指令 |
+| `link-api/` | 眼镜 CustomApp 通道、HUD 画指令与导航 hint |
 | 手机 `apps/phone` | **主应用 / 产品入口**。乐奇授权拿 CXR token；`CXRLink` + `CUSTOMAPP`；Agent 工具；TTS；GPS + 高德步行；读门店目录 |
 | 门店 `apps/store` | 线下录入店名和当前经纬度，写入 `Download/glass-stores.json`；改完不用重装到餐 |
 | 乐奇 AI App | 连眼镜、桥接 IO。本 App 不自己扫 Glass3 蓝牙 |
@@ -189,7 +189,7 @@ apps/phone     主应用：到餐 Agent + CXR-L + 乐奇 + GPS 步行
 apps/glass     眼镜 CustomApp（对话面 / 门店详情 / 导航条）
 apps/store     门店录入：店名 + 当前经纬度，随时改 JSON
 shared         Agent 协议 / place 地点模型 / 目录 JSON / 匹配 / 问答
-nav-api        CustomApp 通道
+link-api       CustomApp 通道 / hud.draw / 导航 hint
 ```
 
 - Maven：`https://maven.rokid.com/repository/maven-public/`

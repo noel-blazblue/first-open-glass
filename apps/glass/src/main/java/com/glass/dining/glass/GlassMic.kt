@@ -8,9 +8,9 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.util.Log
-import com.glass.dining.shared.nav.NavProtocol
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import com.glass.dining.shared.link.MediaWire
 
 class GlassMic(private val context: Context) {
     private val lock = Any()
@@ -35,7 +35,7 @@ class GlassMic(private val context: Context) {
                 return lastError!!
             }
             val minBuf = AudioRecord.getMinBufferSize(
-                NavProtocol.PCM_SAMPLE_RATE,
+                MediaWire.PCM_SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
             )
@@ -43,7 +43,7 @@ class GlassMic(private val context: Context) {
                 lastError = "无法创建录音缓冲"
                 return lastError!!
             }
-            val chunk = (NavProtocol.PCM_SAMPLE_RATE / 10) * 2
+            val chunk = (MediaWire.PCM_SAMPLE_RATE / 10) * 2
             val bufferSize = maxOf(minBuf, chunk * 2)
             lastError = null
             val gen = generation.incrementAndGet()
@@ -78,7 +78,7 @@ class GlassMic(private val context: Context) {
         try {
             recorder = AudioRecord(
                 MediaRecorder.AudioSource.MIC,
-                NavProtocol.PCM_SAMPLE_RATE,
+                MediaWire.PCM_SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
                 bufferSize,

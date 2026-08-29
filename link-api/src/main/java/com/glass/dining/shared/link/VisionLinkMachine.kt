@@ -1,6 +1,5 @@
 package com.glass.dining.shared.link
 
-import com.glass.dining.shared.nav.P2pOffer
 import java.util.concurrent.atomic.AtomicLong
 
 class VisionLinkMachine(

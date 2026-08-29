@@ -1,12 +1,12 @@
 package com.glass.dining.glass.spatial
 
 import android.util.Log
-import com.glass.dining.shared.nav.NavPose
-import com.glass.dining.shared.nav.NavProtocol
+import com.glass.dining.shared.link.GlassPose
 import org.webrtc.DataChannel
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicInteger
+import com.glass.dining.shared.link.PoseWire
 
 class RtcPoseSender {
     @Volatile var open: Boolean = false
@@ -30,13 +30,13 @@ class RtcPoseSender {
         Log.i(TAG, "rtc pose attached label=${next.label()} state=${next.state()}")
     }
 
-    fun send(pose: NavPose): Boolean {
+    fun send(pose: GlassPose): Boolean {
         val dc = channel ?: return false
         if (dc.state() != DataChannel.State.OPEN) {
             open = false
             return false
         }
-        val json = NavProtocol.poseJson(pose)
+        val json = PoseWire.poseJson(pose)
         val payload = DataChannel.Buffer(ByteBuffer.wrap(json.toByteArray(StandardCharsets.UTF_8)), false)
         val ok = try {
             dc.send(payload)

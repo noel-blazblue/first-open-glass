@@ -66,7 +66,7 @@ tasks.register("fetchVoskModel") {
 }
 dependencies {
     implementation project(":shared")
-    implementation project(":nav-api")
+    implementation project(":link-api")
     implementation("com.rokid.cxr:client-l:1.0.3")
     implementation "com.alphacephei:vosk-android:0.3.47"
     def composeBom = platform("androidx.compose:compose-bom:2024.06.00")

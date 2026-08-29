@@ -1,6 +1,6 @@
 package com.glass.dining.phone.nav
 
-import com.glass.dining.shared.nav.NavHint
+import com.glass.dining.shared.link.NavHint
 import kotlin.math.roundToInt
 
 object WalkGuide {

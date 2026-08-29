@@ -6,7 +6,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.util.Log
-import com.glass.dining.shared.nav.NavPose
+import com.glass.dining.shared.link.GlassPose
 import java.util.concurrent.atomic.AtomicInteger
 
 class ImuTracker(context: Context) : SensorEventListener {
@@ -27,8 +27,8 @@ class ImuTracker(context: Context) : SensorEventListener {
     val rollDegrees: Float
         get() = rollMilli.get() / 1000f
 
-    val pose: NavPose
-        get() = NavPose(yaw = yawDegrees, pitch = pitchDegrees, roll = rollDegrees)
+    val pose: GlassPose
+        get() = GlassPose(yaw = yawDegrees, pitch = pitchDegrees, roll = rollDegrees)
 
     val sensorName: String
         get() = rotation?.name ?: "none"

@@ -66,7 +66,7 @@ private fun IdleHud(state: HudUiState) {
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(
-            text = "到店餐饮",
+            text = "Hi",
             color = HudColors.green,
             fontSize = 18.sp,
             fontWeight = FontWeight.Medium,
