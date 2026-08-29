@@ -64,7 +64,7 @@ data class HudCard(
     companion object {
         const val LINE = 16
         const val SPEECH = 80
-        const val SPEECH_WIDTH = 14
+        const val SPEECH_WIDTH = 16
         const val SPEECH_LINES = TalkLayout.SPEECH_LINES
         const val LAYOUT_TALK = "talk"
         const val LAYOUT_CARD = "card"

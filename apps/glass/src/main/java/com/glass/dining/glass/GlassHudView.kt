@@ -88,12 +88,12 @@ class GlassHudView @JvmOverloads constructor(
             HudOverlay.DRAW -> scene?.let { HudDrawRenderer.draw(canvas, it, w, h) }
             HudOverlay.STORE -> shown?.let { StoreDetailHud.draw(canvas, it, storeCaption, w, h) }
             HudOverlay.NAV -> drawNav(canvas, cx, w, h)
-            HudOverlay.TALK -> drawTalk(canvas, w, h)
+            HudOverlay.TALK -> drawTalk(canvas, cx, w, h)
             else -> drawCard(canvas, cx, h)
         }
         green.textAlign = Paint.Align.LEFT
         green.textSize = 14f
-        canvas.drawText(clockFmt.format(Date()), 16f, h - 16f, green)
+        canvas.drawText(clockFmt.format(Date()), TalkLayout.CLOCK_LEFT, h - TalkLayout.CLOCK_BOTTOM, green)
         if (isProductStatus(status)) {
             green.textAlign = Paint.Align.CENTER
             green.textSize = 13f
@@ -106,13 +106,12 @@ class GlassHudView @JvmOverloads constructor(
         return line.contains("权限")
     }
 
-    private fun drawTalk(canvas: Canvas, w: Float, h: Float) {
+    private fun drawTalk(canvas: Canvas, cx: Float, w: Float, h: Float) {
         val now = SystemClock.uptimeMillis()
         val size = TalkLayout.characterSize(w, h)
-        val charCx = TalkLayout.characterCenterX(w, h)
         val charCy = TalkLayout.characterCenterY(h)
         green.textSize = TalkLayout.TEXT_SIZE_PX
-        green.textAlign = Paint.Align.LEFT
+        green.textAlign = Paint.Align.CENTER
         val pending = TalkCaption.lines(w, h, card.speech, green.fontMetrics.descent)
         val key = TalkCaption.key(pending)
         if (key != talkKey) {
@@ -129,7 +128,7 @@ class GlassHudView @JvmOverloads constructor(
         ReimuHud.draw(
             canvas,
             resources,
-            charCx,
+            cx,
             charCy,
             size,
             TalkPose.of(card.pose, card.speech),

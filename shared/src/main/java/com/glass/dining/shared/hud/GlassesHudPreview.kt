@@ -109,7 +109,7 @@ private fun TalkPreview(card: HudCard, modifier: Modifier = Modifier) {
         val lines = TalkCaption.lines(w, h, card.speech, scroll = scroll)
         val size = TalkLayout.characterSize(w, h)
         val charW = TalkLayout.characterWidth(w, h)
-        val charCx = TalkLayout.characterCenterX(w, h)
+        val charCx = TalkLayout.characterCenterX(w)
         val charCy = TalkLayout.characterCenterY(h)
         val bob = kotlin.math.sin(tSec * 2.4f) * TalkLayout.BOB_PX
         Image(
@@ -135,12 +135,10 @@ private fun TalkPreview(card: HudCard, modifier: Modifier = Modifier) {
                 color = HudColors.green.copy(alpha = line.alpha),
                 fontSize = with(density) { textPx.toSp() },
                 fontWeight = FontWeight.Normal,
-                modifier = Modifier.offset {
-                    IntOffset(
-                        line.x.roundToInt(),
-                        (line.y - textPx).roundToInt(),
-                    )
-                },
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .offset { IntOffset(0, (line.y - textPx).roundToInt()) },
             )
         }
     }

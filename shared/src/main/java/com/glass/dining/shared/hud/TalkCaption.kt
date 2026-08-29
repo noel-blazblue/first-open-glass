@@ -36,13 +36,13 @@ object TalkCaption {
         h: Float,
         speech: String,
         descent: Float = 0f,
-        width: Int = TalkLayout.speechColumns(w, h),
+        width: Int = TalkLayout.speechColumns(w),
         maxLines: Int = TalkLayout.SPEECH_LINES,
         scroll: Float = 1f,
     ): List<TalkLine> {
         val all = chunks(speech, width)
         val shown = if (all.size <= maxLines) all else all.takeLast(maxLines)
-        val x = TalkLayout.textLeft(w, h)
+        val x = TalkLayout.textCenterX(w)
         return shown.mapIndexed { index, line ->
             val fromBottom = shown.lastIndex - index
             TalkLine(

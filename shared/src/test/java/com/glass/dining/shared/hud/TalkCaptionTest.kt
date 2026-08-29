@@ -14,22 +14,24 @@ class TalkCaptionTest {
     }
 
     @Test
-    fun overflowKeepsLiveLineAndOneGhost() {
+    fun overflowKeepsLatestLinesAndFadesOlder() {
         val width = TalkLayout.speechColumns()
-        val text = "附近有几家店，你想吃什么？第一是一家火锅，现在人不多。也可以去面馆。"
+        val text = "附近有几家店，你想吃什么？第一是一家火锅，现在人不多。也可以去面馆，走路更近一点。"
         val all = TalkCaption.chunks(text, width)
-        assertTrue(all.size > 2)
+        assertTrue(all.size >= 3)
         val lines = TalkCaption.lines(480f, 640f, text, width = width)
-        assertEquals(2, lines.size)
-        assertEquals(all.takeLast(2), lines.map { it.text })
+        assertEquals(3, lines.size)
+        assertEquals(all.takeLast(3), lines.map { it.text })
         assertEquals(1f, lines.last().alpha)
-        assertEquals(TalkLayout.FADE_NEAR, lines.first().alpha)
+        assertEquals(TalkLayout.FADE_NEAR, lines[1].alpha)
+        assertEquals(TalkLayout.FADE_FAR, lines.first().alpha)
         assertTrue(lines[0].y < lines[1].y)
+        assertTrue(lines[1].y < lines[2].y)
     }
 
     @Test
     fun liveBaselineStaysLockedWhileGhostRises() {
-        val text = "一二三四五六七八九十一二三四五六"
+        val text = "一二三四五六七八九十一二三四五六七八九十"
         val start = TalkCaption.lines(480f, 640f, text, scroll = 0f)
         val end = TalkCaption.lines(480f, 640f, text, scroll = 1f)
         assertEquals(2, start.size)

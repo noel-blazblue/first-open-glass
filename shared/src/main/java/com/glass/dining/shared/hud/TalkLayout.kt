@@ -2,20 +2,21 @@ package com.glass.dining.shared.hud
 
 import kotlin.math.min
 
-/** 对话面：当前行锁在脸旁，上一行残影上移。 */
+/** 对话面：人物居中，字幕在头顶，上一行残影上移。 */
 object TalkLayout {
     const val CHAR_SIZE_FRACTION = 0.28f
-    const val CHAR_CX_FRACTION = 0.25f
     const val CHAR_CY_FRACTION = 0.84f
     const val CHAR_ASPECT = 193f / 320f
-    const val LINE_GAP_PX = 26f
-    const val TEXT_SIZE_PX = 17f
-    const val TEXT_GAP_X = 10f
+    const val LINE_GAP_PX = 28f
+    const val TEXT_SIZE_PX = 20f
+    const val TEXT_GAP_PX = 18f
     const val BOB_PX = 3.5f
-    const val SPEECH_LINES = 2
+    const val CLOCK_LEFT = 16f
+    const val CLOCK_BOTTOM = 16f
+    const val SPEECH_LINES = 3
     const val FADE_START = 0.62f
-    const val FADE_NEAR = 0.22f
-    const val FADE_FAR = 0.10f
+    const val FADE_NEAR = 0.28f
+    const val FADE_FAR = 0.12f
     const val SCROLL_MS = 260f
     const val GLASS_W = 480f
     const val GLASS_H = 640f
@@ -23,34 +24,30 @@ object TalkLayout {
     const val SAFE_RIGHT = 416f
     const val SAFE_TOP = 56f
     const val SAFE_BOTTOM = 552f
+    const val PREVIEW_GAP_DP = 16
+    const val PREVIEW_CHAR_WIDTH_DP = 72
+    const val PREVIEW_CHAR_HEIGHT_DP = 96
 
     fun characterSize(w: Float, h: Float): Float = min(w, h) * CHAR_SIZE_FRACTION
 
     fun characterWidth(w: Float, h: Float): Float = characterSize(w, h) * CHAR_ASPECT
 
-    fun characterCenterX(w: Float, h: Float): Float {
-        val half = characterWidth(w, h) / 2f
-        return (w * CHAR_CX_FRACTION).coerceIn(safeLeft(w) + half, safeRight(w) - half)
-    }
+    fun characterCenterX(w: Float): Float = w / 2f
 
     fun characterCenterY(h: Float): Float = h * CHAR_CY_FRACTION
 
     fun characterTop(w: Float, h: Float): Float = characterCenterY(h) - characterSize(w, h) / 2f
 
-    fun characterRight(w: Float, h: Float): Float = characterCenterX(w, h) + characterWidth(w, h) / 2f
+    fun textCenterX(w: Float): Float = w / 2f
 
-    fun textLeft(w: Float, h: Float): Float = characterRight(w, h) + TEXT_GAP_X
+    fun textMaxWidth(w: Float): Float = (safeRight(w) - safeLeft(w)).coerceAtLeast(TEXT_SIZE_PX * 6f)
 
-    fun textMaxWidth(w: Float, h: Float): Float {
-        return (safeRight(w) - textLeft(w, h)).coerceAtLeast(TEXT_SIZE_PX * 6f)
-    }
-
-    fun speechColumns(w: Float = GLASS_W, h: Float = GLASS_H): Int {
-        return (textMaxWidth(w, h) / TEXT_SIZE_PX).toInt().coerceIn(8, 16)
+    fun speechColumns(w: Float = GLASS_W): Int {
+        return (textMaxWidth(w) / TEXT_SIZE_PX).toInt().coerceIn(10, 16)
     }
 
     fun newestBaselineY(w: Float, h: Float, descent: Float): Float {
-        return characterTop(w, h) + characterSize(w, h) * 0.32f - descent
+        return characterTop(w, h) - BOB_PX - TEXT_GAP_PX - descent
     }
 
     fun lineBaselineY(w: Float, h: Float, fromBottom: Int, descent: Float, scroll: Float = 1f): Float {
