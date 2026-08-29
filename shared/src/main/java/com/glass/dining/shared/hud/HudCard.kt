@@ -65,7 +65,7 @@ data class HudCard(
         const val LINE = 16
         const val SPEECH = 80
         const val SPEECH_WIDTH = 14
-        const val SPEECH_LINES = 3
+        const val SPEECH_LINES = TalkLayout.SPEECH_LINES
         const val LAYOUT_TALK = "talk"
         const val LAYOUT_CARD = "card"
         const val LAYOUT_NAV = "nav"
@@ -85,9 +85,8 @@ data class HudCard(
             return kept
         }
 
-        fun wrapSpeech(text: String, width: Int = SPEECH_WIDTH, maxLines: Int = SPEECH_LINES): List<String> {
-            val lines = wrap(text.ifBlank { "Hi, 我在听" }, width, maxLines)
-            return if (lines.isEmpty()) listOf("Hi, 我在听") else lines
+        fun wrapSpeech(text: String, width: Int = TalkLayout.speechColumns(), maxLines: Int = SPEECH_LINES): List<String> {
+            return TalkCaption.visibleTexts(text, width, maxLines)
         }
 
         fun talk(speech: String, skill: String = "none", pose: String = POSE_IDLE): HudCard {

@@ -88,14 +88,10 @@ object HudWire {
         }
     }
 
-    fun wrapSpeech(text: String, width: Int = 14, maxLines: Int = 3): List<String> {
+    fun wrapSpeech(text: String, width: Int = 14, maxLines: Int = 2): List<String> {
         val clean = text.replace(Regex("[\\r\\n]+"), "").trim().ifBlank { "Hi, 我在听" }
         val parts = clean.chunked(width)
-        if (parts.size <= maxLines) return parts
-        val kept = parts.take(maxLines).toMutableList()
-        val last = kept.last()
-        kept[kept.lastIndex] = if (last.length <= 1) "…" else last.dropLast(1) + "…"
-        return kept
+        return if (parts.size <= maxLines) parts else parts.takeLast(maxLines)
     }
 }
 

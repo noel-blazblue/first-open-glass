@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -149,7 +150,7 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
             modifier = Modifier
                 .padding(top = 8.dp)
                 .fillMaxWidth()
-                .height(240.dp)
+                .aspectRatio(3f / 4f)
                 .clip(RoundedCornerShape(12.dp))
                 .border(1.dp, HudColors.green.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
         )

@@ -3,13 +3,14 @@ package com.glass.dining.phone.hud
 import android.util.Log
 import com.glass.dining.phone.CxrLinkHost
 import com.glass.dining.shared.hud.HudCard
-import com.glass.dining.shared.place.PlaceProfile
-import com.glass.dining.shared.place.PlaceWire
-import java.util.concurrent.atomic.AtomicLong
+import com.glass.dining.shared.hud.HudOverlay
 import com.glass.dining.shared.link.GlassLink
 import com.glass.dining.shared.link.HudDraw
 import com.glass.dining.shared.link.HudDrawScene
 import com.glass.dining.shared.link.HudWire
+import com.glass.dining.shared.place.PlaceProfile
+import com.glass.dining.shared.place.PlaceWire
+import java.util.concurrent.atomic.AtomicLong
 
 internal object CxrHud {
     @Volatile var lastCard: HudCard = HudCard.idle()
@@ -20,16 +21,20 @@ internal object CxrHud {
         private set
     @Volatile var lastDraw: HudDrawScene? = null
         private set
+    @Volatile var lastNav: HudCard? = null
+        private set
     private val hudSeq = AtomicLong(0)
     private val drawSeq = AtomicLong(0)
 
     fun replay() {
         val drawn = lastDraw
         val store = lastStore
+        val nav = lastNav
         when {
             drawn != null -> showDraw(drawn)
-            lastCard.isNav -> showCard(lastCard)
             store != null -> showStore(store, lastCaption)
+            lastCard.isNav -> showCard(lastCard)
+            nav != null -> showCard(nav)
             else -> showCard(lastCard)
         }
     }
@@ -39,20 +44,46 @@ internal object CxrHud {
         lastCaption = ""
     }
 
+    fun overlayActive(): Boolean = hasOverlay()
+
+    fun overlayKind(pendingConfirm: Boolean): String {
+        return HudOverlay.kind(
+            pendingConfirm = pendingConfirm,
+            drawShowing = lastDraw != null,
+            storeShowing = lastStore != null,
+            cardShowing = !lastCard.isTalk && !lastCard.isNav,
+        )
+    }
+
+    fun clearOverlay() {
+        lastDraw = null
+        lastStore = null
+        lastCaption = ""
+        if (!lastCard.isTalk && !lastCard.isNav) {
+            lastCard = lastNav ?: HudCard.idle()
+        }
+    }
+
+    fun clearNav() {
+        lastNav = null
+    }
+
+    fun resumeNav() {
+        val nav = lastNav ?: lastCard.takeIf { it.isNav } ?: return
+        showCard(nav)
+    }
+
     fun showDraw(scene: HudDrawScene) {
         val stamped = if (scene.seq > 0L) scene else scene.copy(seq = drawSeq.incrementAndGet())
         lastDraw = stamped
         lastStore = null
         lastCaption = ""
-        lastCard = HudCard.idle()
+        if (!lastCard.isNav) lastCard = HudCard.idle()
         val seq = hudSeq.incrementAndGet()
         val json = HudDraw.encode(stamped)
         CxrLinkHost.main.post {
             if (seq != hudSeq.get()) return@post
-            if (!CxrLinkHost.linkReady()) {
-                Log.i(CxrLinkHost.TAG, "showDraw skipped, CXR not ready ops=${stamped.ops.size}")
-                return@post
-            }
+            if (!ready("showDraw skipped, CXR not ready ops=${stamped.ops.size}")) return@post
             if (!CxrLinkHost.hudOpened) {
                 CxrLinkHost.ensureGlassApp("draw")
                 return@post
@@ -68,16 +99,13 @@ internal object CxrHud {
     fun showStore(place: PlaceProfile, caption: String = "") {
         lastStore = place
         lastCaption = caption
-        lastCard = HudCard.idle()
         lastDraw = null
+        if (!lastCard.isNav) lastCard = HudCard.idle()
         val seq = hudSeq.incrementAndGet()
         val json = PlaceWire.encode(place, caption)
         CxrLinkHost.main.post {
             if (seq != hudSeq.get()) return@post
-            if (!CxrLinkHost.linkReady()) {
-                Log.i(CxrLinkHost.TAG, "showStore skipped, CXR not ready name=${place.name}")
-                return@post
-            }
+            if (!ready("showStore skipped, CXR not ready name=${place.name}")) return@post
             if (!CxrLinkHost.hudOpened) {
                 CxrLinkHost.ensureGlassApp("store")
                 return@post
@@ -89,8 +117,16 @@ internal object CxrHud {
 
     fun showCard(card: HudCard) {
         val clipped = card.clipped()
+        if (clipped.isNav) {
+            holdOrPushNav(clipped)
+            return
+        }
         if (clipped.isTalk && lastDraw != null) {
             Log.i(CxrLinkHost.TAG, "hud.card talk kept draw ops=${lastDraw?.ops?.size}")
+            return
+        }
+        if (clipped.isTalk && (lastNav != null || lastCard.isNav)) {
+            Log.i(CxrLinkHost.TAG, "hud.card talk kept nav title=${lastNav?.title ?: lastCard.title}")
             return
         }
         lastCard = clipped
@@ -99,7 +135,7 @@ internal object CxrHud {
             Log.i(CxrLinkHost.TAG, "hud.card talk kept store name=${lastStore?.name}")
             return
         }
-        if (clipped.skill == "browse" && !clipped.isNav && !clipped.isTalk) {
+        if (clipped.skill == "browse" && !clipped.isTalk) {
             if (lastStore != null) {
                 Log.i(CxrLinkHost.TAG, "hud.card browse skipped, store panel active")
                 return
@@ -107,17 +143,36 @@ internal object CxrHud {
             Log.i(CxrLinkHost.TAG, "hud.card browse skipped, use hud.store")
             return
         }
-        if (!clipped.isNav && !clipped.isTalk) {
+        if (!clipped.isTalk) {
             lastStore = null
             lastCaption = ""
         }
+        pushCard(clipped)
+    }
+
+    private fun holdOrPushNav(clipped: HudCard) {
+        val alreadyNavigating = lastNav != null
+        lastNav = clipped
+        if (alreadyNavigating && hasOverlay()) {
+            Log.i(CxrLinkHost.TAG, "hud.card nav held overlay=${overlayKind(false)}")
+            return
+        }
+        lastCard = clipped
+        lastDraw = null
+        lastStore = null
+        lastCaption = ""
+        pushCard(clipped)
+    }
+
+    private fun hasOverlay(): Boolean {
+        return lastDraw != null || lastStore != null || (!lastCard.isTalk && !lastCard.isNav)
+    }
+
+    private fun pushCard(clipped: HudCard) {
         val seq = hudSeq.incrementAndGet()
         CxrLinkHost.main.post {
             if (seq != hudSeq.get()) return@post
-            if (!CxrLinkHost.linkReady()) {
-                Log.i(CxrLinkHost.TAG, "showCard skipped, CXR not ready title=${clipped.title}")
-                return@post
-            }
+            if (!ready("showCard skipped, CXR not ready title=${clipped.title}")) return@post
             if (!CxrLinkHost.hudOpened) {
                 CxrLinkHost.ensureGlassApp("hud")
                 return@post
@@ -147,5 +202,11 @@ internal object CxrHud {
             )
             Log.i(CxrLinkHost.TAG, "hud.card layout=${clipped.layout} skill=${clipped.skill} title=${clipped.title}")
         }
+    }
+
+    private fun ready(skip: String): Boolean {
+        if (CxrLinkHost.linkReady()) return true
+        Log.i(CxrLinkHost.TAG, skip)
+        return false
     }
 }

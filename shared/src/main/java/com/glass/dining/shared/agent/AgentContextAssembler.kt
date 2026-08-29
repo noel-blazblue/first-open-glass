@@ -1,5 +1,6 @@
 package com.glass.dining.shared.agent
 
+import com.glass.dining.shared.hud.HudOverlay
 import com.glass.dining.shared.place.PlaceFacts
 
 object AgentContextAssembler {
@@ -22,6 +23,7 @@ object AgentContextAssembler {
             }
             add(catalogLine(world))
             add(pendingLine(world))
+            HudOverlay.contextLine(world.hudOverlay, world.navActive)?.let(::add)
         }
         return lines.joinToString("\n")
     }
@@ -137,11 +139,7 @@ object AgentContextAssembler {
     }
 
     private fun catalogLine(world: WorldContext): String {
-        return if (world.catalogCount > 0) {
-            "【本地目录】餐饮增强数据 ${world.catalogCount} 家，可 recommend"
-        } else {
-            "【本地目录】0 家，不要 recommend，搜附近公开地点"
-        }
+        return "【已录入门店】${world.catalogCount} 家"
     }
 
     private fun pendingLine(world: WorldContext): String {

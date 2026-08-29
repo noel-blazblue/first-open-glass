@@ -239,7 +239,6 @@ class GlassActivity : android.app.Activity() {
     }
 
     private fun showHint(hint: NavHint) {
-        hud.draw = null
         hud.card = HudLines.fromHint(hint)
         hud.invalidate()
     }

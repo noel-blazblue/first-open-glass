@@ -14,17 +14,13 @@ class WorldAnchorRenderer {
     fun screens(
         pose: Pose3,
         quality: TrackQuality,
-        waypoints: String,
+        @Suppress("UNUSED_PARAMETER") waypoints: String,
         occupancy: OccupancyGrid,
         headingDeg: Float,
         viewW: Float,
         viewH: Float,
         calib: SensorCalibration,
     ): List<GroundChevron> {
-        if (waypoints.isBlank()) {
-            last = emptyList()
-            return emptyList()
-        }
         val world = WorldAnchor.chevrons(pose, headingDeg, occupancy, quality)
         val drawn = GroundGuide.project(
             world = world,

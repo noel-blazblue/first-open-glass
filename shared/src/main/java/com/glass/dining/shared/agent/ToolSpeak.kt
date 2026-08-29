@@ -10,7 +10,7 @@ object ToolSpeak {
         if (isDeveloper(message)) {
             return when {
                 raw.contains("need_search") -> "我再搜一下附近。"
-                raw.contains("empty_catalog") -> "本地目录没有合适的店，我去搜附近公开地点。"
+                raw.contains("empty_catalog") -> "录入的店里没有合适的，我去搜搜附近。"
                 else -> "我先换个办法查一下。"
             }
         }

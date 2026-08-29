@@ -198,7 +198,7 @@ class IndoorHintBinderTest {
         )
         assertEquals("ground", guide.mode)
         assertTrue(guide.scanRequired)
-        assertTrue(guide.waypoints.isEmpty())
+        assertTrue(guide.waypoints.isNotEmpty())
         assertEquals(0, guide.meters)
     }
 
@@ -216,7 +216,7 @@ class IndoorHintBinderTest {
         )
         assertEquals("ground", guide.mode)
         assertEquals("找出口出门", guide.text)
-        assertTrue(guide.waypoints.isEmpty())
+        assertTrue(guide.waypoints.isNotEmpty())
         assertEquals(0, guide.meters)
     }
 
@@ -235,7 +235,7 @@ class IndoorHintBinderTest {
         assertEquals("ground", guide.mode)
         assertEquals("找出口出门", guide.text)
         assertTrue(guide.text.contains("定位丢失").not())
-        assertTrue(guide.waypoints.isEmpty())
+        assertTrue(guide.waypoints.isNotEmpty())
         assertEquals(0, guide.meters)
     }
 

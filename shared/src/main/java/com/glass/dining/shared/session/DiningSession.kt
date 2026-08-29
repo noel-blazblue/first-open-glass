@@ -194,6 +194,13 @@ class DiningSession(
         pendingPay = null
     }
 
+    /** 关掉覆盖层：取消待确认、放开菜单闩。不解绑、不停导航。 */
+    fun cancelOverlay() {
+        pendingPay = null
+        pendingCoupon = null
+        lastMenu = emptyList()
+    }
+
     /**
      * 逻辑离开当前业务面。返回离开的是哪一面，供模块 beforeExit。
      * STORE 只表示会话认为可以关浏览闩，不解绑。

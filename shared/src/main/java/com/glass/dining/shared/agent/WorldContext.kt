@@ -57,6 +57,7 @@ data class WorldContext(
     val pendingCoupon: String = "",
     val spokenFloor: String = "",
     val environment: EnvironmentState? = null,
+    val hudOverlay: String = "",
     val navActive: Boolean = false,
     val modelReady: Boolean = false,
     val capabilities: List<String> = emptyList(),

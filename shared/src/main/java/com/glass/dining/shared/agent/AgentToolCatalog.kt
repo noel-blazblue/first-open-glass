@@ -35,7 +35,7 @@ object AgentToolCatalog {
     )
     val RECOMMEND = spec(
         "recommend",
-        "按本地餐饮目录推荐餐厅。query 是口味或需求；avoid_queue=true 表示避开排队。目录为空或未命中时会提示去搜附近。",
+        "从已录入的门店里推荐餐厅。query 是口味或需求；avoid_queue=true 表示避开排队。没有录入或未命中时会提示去搜附近。",
         """{"type":"object","properties":{"query":{"type":"string"},"avoid_queue":{"type":"boolean"}}}""",
     )
     val SELECT_STORE = spec(
@@ -78,8 +78,15 @@ object AgentToolCatalog {
     )
     val DRAW_HUD = spec(
         "draw_hud",
-        "在镜片上画一帧。交 layout：一列 text/rule/row；示意图再用 path/circle/rect。介绍地点或资料时优先用。导航行进中不要调用。",
+        "在镜片上画一帧。交 layout：一列 text/rule/row；示意图再用 path/circle/rect。介绍地点或资料时优先用。导航中可以调用，关掉后回到导航。",
         """{"type":"object","properties":{"layout":{"type":"array","items":{"type":"object","properties":{"t":{"type":"string","enum":["text","rule","row","col","path","circle","rect"]},"role":{"type":"string","enum":["kicker","title","body","meta","hint"]},"v":{"type":"string"},"left":{"type":"string"},"right":{"type":"string"},"gap":{"type":"string","enum":["s","m","l"]},"ch":{"type":"array","items":{"type":"object"}},"d":{"type":"string"},"k":{"type":"string","enum":["s","f","b"]},"r":{"type":"number"},"rw":{"type":"number"},"rh":{"type":"number"}},"required":["t"]}},"seq":{"type":"integer"}}}""",
+        ToolRisk.WRITE,
+        parallelSafe = false,
+    )
+    val CLOSE_HUD = spec(
+        "close_hud",
+        "关掉镜片上当前覆盖画面。自绘帧、门店卡、资料卡、待确认支付或核销都走这里。导航中关掉后回到导航；镜片只剩导航时用 stop_navigation。",
+        """{"type":"object","properties":{}}""",
         ToolRisk.WRITE,
         parallelSafe = false,
     )
@@ -87,7 +94,7 @@ object AgentToolCatalog {
     val ALL: List<ToolSpec> = listOf(
         LOOK_AT_SCENE, SEARCH_NEARBY, RESOLVE_DEST, START_NAV, STOP_NAV,
         RECOMMEND, SELECT_STORE, GET_PLACE_DETAILS, LIST_COUPONS, SCAN_COUPON, REDEEM, CHECKOUT,
-        DRAW_HUD,
+        DRAW_HUD, CLOSE_HUD,
     )
 
     val ALIASES = mapOf(
@@ -97,6 +104,7 @@ object AgentToolCatalog {
         "read_sign" to LOOK_AT_SCENE.name,
         "read_menu" to LOOK_AT_SCENE.name,
         "ask_store" to GET_PLACE_DETAILS.name,
+        "dismiss_hud" to CLOSE_HUD.name,
     )
 
     fun byName(name: String): ToolSpec? {
@@ -126,12 +134,13 @@ object AgentPrompts {
 何时使用：要呈现的内容超过一两句，或要对比、列字段、给方向时。
 怎么做：先用工具拿到事实，再 draw_hud。列表交 layout 一列：标题、rule、row 的 left/right；示意图才用 path/circle/rect。例如：
 [{"t":"text","role":"title","v":"附近 3 家"},{"t":"rule"},{"t":"row","left":"松月面馆","right":"420米"}]
-只画查到的字段，不要编数字。不要指望门店卡或四行卡会替你画。导航行进中不要 draw_hud 盖掉方向指引。口播仍短；镜片上的字和嘴里说的可以不同。
+只画查到的字段，不要编数字。不要指望门店卡或四行卡会替你画。导航中可以 draw_hud 盖一页；关掉后回到导航指引。口播仍短；镜片上的字和嘴里说的可以不同。
+关掉：有盖层时 close_hud；关掉后若在导航则回到导航。只剩导航时用 stop_navigation。
 
 【到店美食与餐饮探索】
 场景：发现餐厅、了解排队人均菜单优惠、选定要去的店。
 何时使用：用户提到餐饮品类或店名；或没给品类、只泛指找店/找吃的，如附近有什么门店、有啥店。
-怎么做：本地目录大于 0 家时优先 recommend；目录为空或未命中时用 search_nearby_places。只有没给品类时才把 keyword 改写成美食或餐厅；用户说了品类或店名就用原词。禁止把门店、附近、推荐当 keyword。排队、招牌、优惠、包间只有本地目录里的店才能说。问某家店的评分、人均、营业、电话、地址时用 get_place_details。查到事实后用 draw_hud 介绍。用户要去这家才 select_store。
+怎么做：【已录入门店】大于 0 家时优先 recommend；0 家或未命中时用 search_nearby_places。只有没给品类时才把 keyword 改写成美食或餐厅；用户说了品类或店名就用原词。禁止把门店、附近、推荐当 keyword。排队、招牌、优惠、包间只有已录入的店才能说。问某家店的评分、人均、营业、电话、地址时用 get_place_details。查到事实后用 draw_hud 介绍。用户要去这家才 select_store。
 
 【现实环境与视觉问答】
 场景：用户要看眼前现在是什么。
@@ -146,12 +155,13 @@ object AgentPrompts {
 【演示交易与优惠】
 场景：演示优惠券和支付。
 何时使用：用户要看券、核销、买单。
-怎么做：先问确认，用户明确说确认后再带 confirm=true。没确认禁止执行。
+怎么做：先问确认，用户明确说确认后再带 confirm=true。没确认禁止执行。用户取消确认时 close_hud，不要带 confirm=true。
 
 规则：
 - Observation（场景观察、OCR、疑似门头、黄色横幅）不是 Fact。
 - 无提问时不要主动说话。用户问了才根据观察回答。导航安全提示除外。
-- 工具失败时根据返回解释、换工具或向用户补信息，不要改口成「目录没有」。目录没有时去搜附近，只有搜索也失败才说没找到。
+- 工具失败时根据返回解释、换工具或向用户补信息，不要改口成「没有店」。已录入门店没有时去搜附近，只有搜索也失败才说没找到。
+- 【】括起的是内部状态，用来帮你决策；不要原样念给用户，用口语转述。
 - 对用户说话不要提地图供应商名称。
 - 天气、百科等没有对应工具时，如实说能力边界，不要强行调用地点工具。"""
 

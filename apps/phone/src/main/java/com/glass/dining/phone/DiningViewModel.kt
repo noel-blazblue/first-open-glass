@@ -620,6 +620,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             Log.i(TAG, "talk on: $mic")
+            kickOpenVisionStream()
             main.postDelayed({
                 if (!_ui.value.talking) return@postDelayed
                 if (CxrLinkHost.pcmPackets > 0) return@postDelayed
@@ -1276,6 +1277,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             CxrLinkHost.startNav(hint)
+            CxrHud.clearOverlay()
             CxrLinkHost.showCard(card)
             storePanel.cancel()
         }
@@ -1432,6 +1434,7 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
             pendingCoupon = session.pendingCoupon?.title.orEmpty(),
             spokenFloor = spokenFloor,
             environment = env,
+            hudOverlay = CxrHud.overlayKind(session.hasPendingConfirm),
             navActive = session.navigating,
             modelReady = PhoneAi.ready,
             capabilities = listOf("问答", "看环境", "搜附近", "导航", "到餐增强", "演示支付"),
@@ -1489,6 +1492,22 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
         }
         override fun showDraw(scene: com.glass.dining.shared.link.HudDrawScene) {
             main.post { CxrLinkHost.showDraw(scene) }
+        }
+        override fun hudOverlay(): String {
+            return CxrHud.overlayKind(session.hasPendingConfirm)
+        }
+        override fun closeHud() {
+            session.cancelOverlay()
+            storePanel.cancel()
+            CxrHud.clearOverlay()
+            main.post {
+                _ui.update { it.copy(store = null, storeCaption = "") }
+                if (session.navigating) {
+                    CxrHud.resumeNav()
+                } else {
+                    showTalkFace()
+                }
+            }
         }
         override fun rememberSpokenStore() = this@DiningViewModel.rememberSpokenStore()
         override fun rememberVisionStore(id: String) = this@DiningViewModel.rememberVisionStore(id)

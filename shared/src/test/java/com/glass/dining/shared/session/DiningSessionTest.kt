@@ -53,4 +53,44 @@ class DiningSessionTest {
         assertNotNull(session.viewingStore)
         assertEquals(null, session.currentStore)
     }
+
+    @Test
+    fun cancelOverlayClearsConfirmAndMenuKeepsPlace() {
+        val session = DiningSession(MemoryStoreCatalog(StoreFixtures.twoNearby()))
+        session.look(forceStoreId = "store_hotpot")
+        session.startMenu()
+        session.listCoupons()
+        session.prepareCoupon(session.lastCoupons.first().id)
+        assertTrue(session.hasPendingConfirm)
+        assertTrue(session.lastMenu.isNotEmpty())
+        session.cancelOverlay()
+        assertFalse(session.hasPendingConfirm)
+        assertTrue(session.lastMenu.isEmpty())
+        assertNotNull(session.viewingStore)
+        assertEquals(null, session.currentStore)
+    }
+
+    @Test
+    fun cancelOverlayDoesNotStopNav() {
+        val session = DiningSession(MemoryStoreCatalog(StoreFixtures.twoNearby()))
+        session.look(forceStoreId = "store_hotpot")
+        assertTrue(session.startNav())
+        session.cancelOverlay()
+        assertTrue(session.navigating)
+        assertNotNull(session.currentStore)
+    }
+
+    @Test
+    fun cancelOverlayClearsConfirmDuringNav() {
+        val session = DiningSession(MemoryStoreCatalog(StoreFixtures.twoNearby()))
+        session.look(forceStoreId = "store_hotpot")
+        assertTrue(session.startNav())
+        session.listCoupons()
+        session.prepareCoupon(session.lastCoupons.first().id)
+        assertTrue(session.hasPendingConfirm)
+        session.cancelOverlay()
+        assertTrue(session.navigating)
+        assertFalse(session.hasPendingConfirm)
+        assertNotNull(session.currentStore)
+    }
 }

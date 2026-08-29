@@ -329,15 +329,24 @@ object CxrLinkHost {
         CxrHud.dismissStore()
     }
 
+    fun clearOverlay() {
+        CxrHud.clearOverlay()
+    }
+
     fun startNav(hint: NavHint) {
         sendCmd(GlassLink.CMD_NAV_START, NavWire.hintJson(hint))
     }
 
     fun updateHint(hint: NavHint) {
+        if (CxrHud.overlayActive()) {
+            Log.i(TAG, "nav.update held overlay=${CxrHud.overlayKind(false)}")
+            return
+        }
         sendCmd(GlassLink.CMD_NAV_UPDATE, NavWire.hintJson(hint))
     }
 
     fun stopNav() {
+        CxrHud.clearNav()
         sendCmd(GlassLink.CMD_NAV_STOP)
     }
 

@@ -51,7 +51,7 @@ object IndoorHintBinder {
             explore.turn.isNotBlank() -> explore.turn
             else -> ocr?.turn ?: "straight"
         }
-        val pts = if (!arrived && explore.hasGuide) {
+        val pts = if (!arrived) {
             WorldAnchor.chevrons(pose, heading, occupancy, quality)
         } else {
             emptyList()

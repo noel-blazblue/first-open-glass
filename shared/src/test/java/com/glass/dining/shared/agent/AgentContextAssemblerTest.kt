@@ -238,7 +238,27 @@ class AgentContextAssemblerTest {
         assertTrue(debug.contains("nav=true"))
         assertTrue(debug.contains("catalog=12"))
         assertTrue(debug.contains("catalog"))
-        assertTrue(model.contains("【本地目录】餐饮增强数据 12 家，可 recommend"))
+        assertTrue(model.contains("【已录入门店】12 家"))
+    }
+
+    @Test
+    fun overlayLineTellsModelHowToLeave() {
+        val draw = AgentContextAssembler.format(WorldContext(hudOverlay = "draw"))
+        val confirm = AgentContextAssembler.format(
+            WorldContext(hudOverlay = "confirm", pendingPay = "待付88元给巴奴"),
+        )
+        val nav = AgentContextAssembler.format(WorldContext(navActive = true))
+        val drawOnNav = AgentContextAssembler.format(WorldContext(hudOverlay = "draw", navActive = true))
+        val idle = AgentContextAssembler.format(WorldContext())
+        assertTrue(draw.contains("【镜片覆盖】自绘画面"))
+        assertTrue(draw.contains("close_hud"))
+        assertTrue(confirm.contains("待确认支付或核销"))
+        assertTrue(confirm.contains("close_hud"))
+        assertTrue(nav.contains("stop_navigation"))
+        assertTrue(drawOnNav.contains("close_hud"))
+        assertTrue(drawOnNav.contains("回到导航"))
+        assertFalse(drawOnNav.contains("停导航用 stop_navigation"))
+        assertFalse(idle.contains("【镜片覆盖】"))
     }
 
     @Test

@@ -7,8 +7,16 @@ object P2pJoinPolicy {
         return !joined && !currentSsid.isNullOrBlank() && currentSsid == nextSsid
     }
 
-    fun ignoreOffer(joined: Boolean, currentSsid: String?, nextSsid: String): Boolean {
-        return joined && currentSsid == nextSsid
+    fun ignoreOffer(
+        joined: Boolean,
+        currentSsid: String?,
+        nextSsid: String,
+        currentAttempt: String = "",
+        nextAttempt: String = "",
+    ): Boolean {
+        if (!joined || currentSsid != nextSsid) return false
+        if (nextAttempt.isBlank() || currentAttempt.isBlank()) return true
+        return currentAttempt == nextAttempt
     }
 
     fun readyIp(groupFormed: Boolean, isGroupOwner: Boolean, ipv4: String): String? {

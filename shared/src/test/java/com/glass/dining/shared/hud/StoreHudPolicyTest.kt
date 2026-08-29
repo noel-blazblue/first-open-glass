@@ -23,6 +23,7 @@ class StoreHudPolicyTest {
         assertFalse(StoreHudPolicy.keepsStorePanel(AgentToolCatalog.SEARCH_NEARBY.name))
         assertFalse(StoreHudPolicy.keepsStorePanel(AgentToolCatalog.RESOLVE_DEST.name))
         assertFalse(StoreHudPolicy.keepsStorePanel(AgentToolCatalog.DRAW_HUD.name))
+        assertFalse(StoreHudPolicy.keepsStorePanel(AgentToolCatalog.CLOSE_HUD.name))
         assertTrue(StoreHudPolicy.shouldDismissOffTopic(true, false, false))
     }
 

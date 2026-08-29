@@ -19,6 +19,24 @@ class P2pJoinPolicyTest {
     fun sameOfferDoesNotReconnect() {
         assertTrue(P2pJoinPolicy.keepCurrentOffer("DIRECT-AB", joined = false, nextSsid = "DIRECT-AB"))
         assertTrue(P2pJoinPolicy.ignoreOffer(joined = true, currentSsid = "DIRECT-AB", nextSsid = "DIRECT-AB"))
+        assertTrue(
+            P2pJoinPolicy.ignoreOffer(
+                joined = true,
+                currentSsid = "DIRECT-AB",
+                nextSsid = "DIRECT-AB",
+                currentAttempt = "a1",
+                nextAttempt = "a1",
+            ),
+        )
+        assertFalse(
+            P2pJoinPolicy.ignoreOffer(
+                joined = true,
+                currentSsid = "DIRECT-AB",
+                nextSsid = "DIRECT-AB",
+                currentAttempt = "a1",
+                nextAttempt = "a2",
+            ),
+        )
         assertFalse(P2pJoinPolicy.mayConnect(active = true, joined = false, connecting = true))
         assertFalse(P2pJoinPolicy.mayConnect(active = true, joined = true, connecting = false))
         assertFalse(P2pJoinPolicy.mayDiscover(active = true, joined = true))

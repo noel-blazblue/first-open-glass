@@ -25,7 +25,7 @@ class DiningToolProvider(private val world: PhoneWorld) {
                 .put("ok", false)
                 .put("error", "empty_catalog")
                 .put("hint", "search_nearby_places")
-                .put("message", "本地餐饮目录是空的，去搜附近公开地点")
+                .put("message", "附近还没有录入的店")
                 .toString()
         }
         if (world.session.navigating) world.dismiss(DismissReason.REPLACE)
@@ -36,7 +36,7 @@ class DiningToolProvider(private val world: PhoneWorld) {
                 .put("ok", false)
                 .put("error", "empty_catalog")
                 .put("hint", "search_nearby_places")
-                .put("message", "本地目录没有合适的店，去搜附近公开地点")
+                .put("message", "录入的店里没有符合条件的")
                 .toString()
         world.recommendedThisTurn = true
         world.rememberSpokenStore()

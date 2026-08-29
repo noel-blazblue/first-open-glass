@@ -1,3 +1,19 @@
+## 2026-08-30 — 导航中盖门店卡/自绘会被 nav.update 打掉
+
+- 场景：导航中要看门店详情，口播有了，镜片一直停在导航。
+- 误判：`hud.store` / `hud.draw` 没发出去；或只按住 `hud.card` 就够了。
+- 根因：手机按住了导航卡，但仍每秒发 `nav.update`。眼镜 `showHint` 清掉 `draw`。门店卡就算到了，`onDraw` 也先画 `card.isNav`，盖层永远出不来。
+- 以后先做：log 同时有 `hud.store`/`hud.draw` 和 `sendCustomCmd cmd=nav.update`，就当盖层被刷新冲掉。盖层期间不要发 `nav.update`；镜片绘制顺序是自绘 > 门店卡 > 导航。
+- 不要做：只看手机 `hud.card nav held` 就当镜片已经盖上；用对话卡去盖导航。
+
+## 2026-08-30 — 同名 Direct 组不能当已经连上
+
+- 场景：手机杀掉重开后建组很快，眼镜收到 `p2p.offer` 却一直不加入，手机空转 `discover as GO`。
+- 误判：眼镜没开到餐页；或开流本身要 30 秒。
+- 根因：小米 GO 的 SSID 每次都叫同一个 `DIRECT-EW-…`。眼镜 `joined && ssid 相同` 就 `join ignored`。手机其实是新一组，旧连接随后 ICE FAILED。
+- 以后先做：看眼镜有没有 `join ignored, already on`。同名但 `attemptId` 变了必须离开旧组再加入。
+- 不要做：只凭 SSID 判断还在同一组；为了重开画面先让人杀眼镜 App。
+
 ## 2026-08-29 — 开口不要开视频，ICE 只认 Direct
 
 - 场景：说话很久手机才听到；首次开画面卡在「打开眼镜 Wi-Fi」约 30 秒。

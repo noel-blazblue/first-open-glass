@@ -115,10 +115,17 @@ object GlassP2p {
     }
 
     fun join(context: Context, next: P2pOffer, send: (String, String?) -> Unit) {
-        if (P2pJoinPolicy.ignoreOffer(joined, offer?.ssid, next.ssid)) {
+        if (P2pJoinPolicy.ignoreOffer(
+                joined,
+                offer?.ssid,
+                next.ssid,
+                offer?.attemptId.orEmpty(),
+                next.attemptId,
+            )
+        ) {
             this.send = send
             this.offer = next
-            Log.i(TAG, "join ignored, already on ${next.ssid}")
+            Log.i(TAG, "join ignored, already on ${next.ssid} attempt=${next.attemptId}")
             return
         }
         if (P2pJoinPolicy.keepCurrentOffer(offer?.ssid, joined, next.ssid)) {
@@ -175,6 +182,10 @@ object GlassP2p {
             }
             try {
                 mgr.cancelConnect(ch, null)
+            } catch (_: Exception) {
+            }
+            try {
+                mgr.removeGroup(ch, null)
             } catch (_: Exception) {
             }
         }

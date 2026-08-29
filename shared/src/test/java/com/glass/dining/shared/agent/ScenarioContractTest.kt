@@ -46,15 +46,15 @@ class ScenarioContractTest {
     @Test
     fun recommendDefersToSearchWhenCatalogEmpty() {
         val desc = AgentToolCatalog.RECOMMEND.description
-        assertTrue(desc.contains("本地餐饮目录"))
+        assertTrue(desc.contains("已录入"))
         assertTrue(desc.contains("query"))
     }
 
     @Test
     fun emptyCatalogWorldTellsModelToSearch() {
         val text = AgentContextAssembler.format(WorldContext(catalogCount = 0))
-        assertTrue(text.contains("【本地目录】0 家"))
-        assertTrue(text.contains("不要 recommend"))
+        assertTrue(text.contains("【已录入门店】0 家"))
+        assertTrue(AgentPrompts.BASE.contains("0 家或未命中时用 search_nearby_places"))
         assertTrue(text.contains("响应用户当前请求"))
         assertFalse(text.contains("闲聊与环境协助"))
     }
@@ -62,7 +62,8 @@ class ScenarioContractTest {
     @Test
     fun catalogWorldAllowsRecommend() {
         val text = AgentContextAssembler.format(WorldContext(catalogCount = 3))
-        assertTrue(text.contains("3 家，可 recommend"))
+        assertTrue(text.contains("【已录入门店】3 家"))
+        assertTrue(AgentPrompts.BASE.contains("大于 0 家时优先 recommend"))
     }
 
     @Test
@@ -102,8 +103,15 @@ class ScenarioContractTest {
         assertTrue(prompt.contains("draw_hud"))
         assertTrue(prompt.contains("不要指望门店卡"))
         assertTrue(prompt.contains("查到事实后用 draw_hud"))
+        assertTrue(prompt.contains("close_hud"))
+        assertTrue(prompt.contains("关掉后若在导航则回到导航"))
+        assertTrue(prompt.contains("导航中可以 draw_hud"))
+        assertFalse(prompt.contains("导航行进中不要 draw_hud"))
         assertTrue(AgentToolCatalog.DRAW_HUD.description.contains("layout"))
         assertFalse(AgentToolCatalog.DRAW_HUD.description.contains("x,y"))
+        assertTrue(AgentToolCatalog.CLOSE_HUD.description.contains("待确认"))
+        assertTrue(AgentToolCatalog.CLOSE_HUD.description.contains("stop_navigation"))
+        assertTrue(AgentToolCatalog.CLOSE_HUD.description.contains("回到导航"))
     }
 
     @Test

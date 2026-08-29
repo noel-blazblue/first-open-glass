@@ -8,7 +8,9 @@ import android.graphics.Path
 import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.View
+import com.glass.dining.shared.hud.HudOverlay
 import com.glass.dining.shared.hud.ReimuHud
+import com.glass.dining.shared.hud.TalkCaption
 import com.glass.dining.shared.hud.TalkLayout
 import com.glass.dining.shared.hud.TalkPose
 import com.glass.dining.shared.indoor.OccupancyGrid
@@ -72,6 +74,8 @@ class GlassHudView @JvmOverloads constructor(
     }
     private val clockFmt = SimpleDateFormat("HH:mm", Locale.CHINA)
     private val path = Path()
+    private var talkKey = ""
+    private var talkKeyAt = 0L
 
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(Color.BLACK)
@@ -80,11 +84,11 @@ class GlassHudView @JvmOverloads constructor(
         val cx = w / 2f
         val shown = store
         val scene = draw
-        when {
-            scene != null -> HudDrawRenderer.draw(canvas, scene, w, h)
-            card.isNav -> drawNav(canvas, cx, w, h)
-            shown != null -> StoreDetailHud.draw(canvas, shown, storeCaption, w, h)
-            card.isTalk -> drawTalk(canvas, cx, w, h)
+        when (HudOverlay.face(scene != null, shown != null, card.isNav, card.isTalk)) {
+            HudOverlay.DRAW -> scene?.let { HudDrawRenderer.draw(canvas, it, w, h) }
+            HudOverlay.STORE -> shown?.let { StoreDetailHud.draw(canvas, it, storeCaption, w, h) }
+            HudOverlay.NAV -> drawNav(canvas, cx, w, h)
+            HudOverlay.TALK -> drawTalk(canvas, w, h)
             else -> drawCard(canvas, cx, h)
         }
         green.textAlign = Paint.Align.LEFT
@@ -102,26 +106,37 @@ class GlassHudView @JvmOverloads constructor(
         return line.contains("权限")
     }
 
-    private fun drawTalk(canvas: Canvas, cx: Float, w: Float, h: Float) {
+    private fun drawTalk(canvas: Canvas, w: Float, h: Float) {
+        val now = SystemClock.uptimeMillis()
         val size = TalkLayout.characterSize(w, h)
-        val cy = TalkLayout.characterCenterY(h)
-        val lines = HudWire.wrapSpeech(card.speech)
+        val charCx = TalkLayout.characterCenterX(w, h)
+        val charCy = TalkLayout.characterCenterY(h)
         green.textSize = TalkLayout.TEXT_SIZE_PX
-        green.textAlign = Paint.Align.CENTER
-        val textBottom = TalkLayout.textBaselineY(w, h, green.fontMetrics.descent)
-        lines.asReversed().forEachIndexed { index, line ->
-            canvas.drawText(line, cx, textBottom - index * TalkLayout.LINE_GAP_PX, green)
+        green.textAlign = Paint.Align.LEFT
+        val pending = TalkCaption.lines(w, h, card.speech, green.fontMetrics.descent)
+        val key = TalkCaption.key(pending)
+        if (key != talkKey) {
+            talkKey = key
+            talkKeyAt = now
         }
+        val scroll = ((now - talkKeyAt) / TalkLayout.SCROLL_MS).coerceIn(0f, 1f)
+        val lines = TalkCaption.lines(w, h, card.speech, green.fontMetrics.descent, scroll = scroll)
+        lines.forEach { line ->
+            green.alpha = (line.alpha * 255f).toInt().coerceIn(0, 255)
+            canvas.drawText(line.text, line.x, line.y, green)
+        }
+        green.alpha = 255
         ReimuHud.draw(
             canvas,
             resources,
-            cx,
-            cy,
+            charCx,
+            charCy,
             size,
             TalkPose.of(card.pose, card.speech),
-            SystemClock.uptimeMillis() / 1000f,
+            now / 1000f,
         )
         green.style = Paint.Style.FILL
+        green.textAlign = Paint.Align.CENTER
     }
 
     private fun drawNav(canvas: Canvas, cx: Float, w: Float, h: Float) {

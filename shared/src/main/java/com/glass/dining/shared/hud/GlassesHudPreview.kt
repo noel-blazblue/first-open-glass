@@ -5,18 +5,19 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -28,17 +29,18 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.sin
 import com.glass.dining.shared.place.PlaceProfile
 
 @Composable
@@ -84,9 +86,9 @@ fun GlassesHudPreview(
 
 @Composable
 private fun TalkPreview(card: HudCard, modifier: Modifier = Modifier) {
-    val lines = HudCard.wrapSpeech(card.speech)
     val pose = TalkPose.of(card.pose, card.speech)
     var tSec by remember { mutableFloatStateOf(0f) }
+    var talkKeyAt by remember { mutableLongStateOf(System.nanoTime()) }
     LaunchedEffect(Unit) {
         val start = withFrameNanos { it }
         while (true) {
@@ -94,25 +96,53 @@ private fun TalkPreview(card: HudCard, modifier: Modifier = Modifier) {
             tSec = (now - start) / 1_000_000_000f
         }
     }
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(bottom = 36.dp),
-        verticalArrangement = Arrangement.Bottom,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        lines.forEach { line ->
-            PreviewLine(line, 18, FontWeight.Normal)
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val w = constraints.maxWidth.toFloat()
+        val h = constraints.maxHeight.toFloat()
+        val pending = TalkCaption.lines(w, h, card.speech)
+        val key = TalkCaption.key(pending)
+        LaunchedEffect(key) {
+            talkKeyAt = System.nanoTime()
         }
-        Spacer(Modifier.height(TalkLayout.PREVIEW_GAP_DP.dp))
+        val scroll = ((System.nanoTime() - talkKeyAt) / 1_000_000f / TalkLayout.SCROLL_MS).coerceIn(0f, 1f)
+        val lines = TalkCaption.lines(w, h, card.speech, scroll = scroll)
+        val size = TalkLayout.characterSize(w, h)
+        val charW = TalkLayout.characterWidth(w, h)
+        val charCx = TalkLayout.characterCenterX(w, h)
+        val charCy = TalkLayout.characterCenterY(h)
+        val bob = kotlin.math.sin(tSec * 2.4f) * TalkLayout.BOB_PX
         Image(
             painter = painterResource(ReimuHud.resId(pose)),
             contentDescription = null,
             contentScale = ContentScale.Fit,
             modifier = Modifier
-                .size(width = TalkLayout.PREVIEW_CHAR_WIDTH_DP.dp, height = TalkLayout.PREVIEW_CHAR_HEIGHT_DP.dp)
-                .graphicsLayer { translationY = sin(tSec * 2.4f) * TalkLayout.BOB_PX },
+                .offset {
+                    IntOffset(
+                        (charCx - charW / 2f).roundToInt(),
+                        (charCy - size / 2f + bob).roundToInt(),
+                    )
+                }
+                .size(
+                    width = with(density) { charW.toDp() },
+                    height = with(density) { size.toDp() },
+                ),
         )
+        val textPx = TalkLayout.TEXT_SIZE_PX
+        lines.forEach { line ->
+            Text(
+                text = line.text,
+                color = HudColors.green.copy(alpha = line.alpha),
+                fontSize = with(density) { textPx.toSp() },
+                fontWeight = FontWeight.Normal,
+                modifier = Modifier.offset {
+                    IntOffset(
+                        line.x.roundToInt(),
+                        (line.y - textPx).roundToInt(),
+                    )
+                },
+            )
+        }
     }
 }
 

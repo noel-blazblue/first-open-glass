@@ -38,6 +38,8 @@ interface PhoneWorld {
     fun publishTalk(speak: String, tts: Boolean)
     fun showCard(card: HudCard)
     fun showDraw(scene: HudDrawScene)
+    fun hudOverlay(): String
+    fun closeHud()
     fun rememberSpokenStore()
     fun rememberVisionStore(id: String)
     fun bindPlace(place: PlaceProfile): MatchResult
