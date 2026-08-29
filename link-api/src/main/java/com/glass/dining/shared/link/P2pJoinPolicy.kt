@@ -32,4 +32,8 @@ object P2pJoinPolicy {
     fun acceptAttempt(current: String, incoming: String): Boolean {
         return incoming.isBlank() || incoming == current
     }
+
+    fun acceptIce(sdp: String): Boolean {
+        return sdp.contains(DIRECT_PREFIX)
+    }
 }

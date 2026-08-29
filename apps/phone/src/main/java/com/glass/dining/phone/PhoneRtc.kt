@@ -32,6 +32,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import com.glass.dining.shared.link.GlassLink
 import com.glass.dining.shared.link.MediaWire
+import com.glass.dining.shared.link.P2pJoinPolicy
 
 /**
  * 手机侧 WebRTC 探针：收眼镜 H.264，信令走 CXR。
@@ -98,6 +99,10 @@ object PhoneRtc {
     fun onRemoteIce(raw: String?) {
         rtc.post {
             val parsed = MediaWire.parseRtcIce(raw) ?: return@post
+            if (!P2pJoinPolicy.acceptIce(parsed.third)) {
+                Log.i(TAG, "drop ice ${parsed.third}")
+                return@post
+            }
             val ice = IceCandidate(parsed.first, parsed.second, parsed.third)
             val peer = pc
             if (peer != null && remoteSet) {
@@ -282,7 +287,7 @@ object PhoneRtc {
         peer.setRemoteDescription(object : EmptySdp() {
             override fun onSetSuccess() {
                 remoteSet = true
-                pendingIce.forEach { peer.addIceCandidate(it) }
+                pendingIce.filter { P2pJoinPolicy.acceptIce(it.sdp) }.forEach { peer.addIceCandidate(it) }
                 pendingIce.clear()
                 status("已收到眼镜 $type")
             }
@@ -300,9 +305,9 @@ object PhoneRtc {
     }
 
     private fun rtcConfig(): PeerConnection.RTCConfiguration {
-        return PeerConnection.RTCConfiguration(iceServers()).apply {
+        return PeerConnection.RTCConfiguration(emptyList()).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.DISABLED
         }
     }
@@ -311,16 +316,6 @@ object PhoneRtc {
         return PeerConnectionFactory.Options().apply {
             // Direct 的 p2p0 没有 INTERNET 能力，默认 NetworkMonitor 会丢掉 192.168.49/24。
             disableNetworkMonitor = true
-        }
-    }
-
-    private fun iceServers(): List<PeerConnection.IceServer> {
-        return listOf(
-            "stun:stun.l.google.com:19302",
-            "stun:stun.qq.com:3478",
-            "stun:stun.miwifi.com:3478",
-        ).map { uri ->
-            PeerConnection.IceServer.builder(uri).createIceServer()
         }
     }
 
@@ -346,6 +341,10 @@ object PhoneRtc {
         }
         override fun onIceCandidate(candidate: IceCandidate?) {
             candidate ?: return
+            if (!P2pJoinPolicy.acceptIce(candidate.sdp)) {
+                Log.i(TAG, "skip ice ${candidate.sdp}")
+                return
+            }
             Log.i(TAG, "local ice ${candidate.sdp}")
             onSignal?.invoke(
                 GlassLink.CMD_RTC_ICE,

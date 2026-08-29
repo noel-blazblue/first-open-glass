@@ -151,6 +151,20 @@ class VisionLinkMachineTest {
     }
 
     @Test
+    fun peerReadyStartsRtcAndOffer() {
+        val machine = VisionLinkMachine { 12_000 }
+        machine.begin(cxrReady = true, glassReady = true)
+        machine.onGroupReady(sampleOffer(machine.snapshot.attemptId))
+        val effects = machine.onPeerReady("192.168.49.2", machine.snapshot.attemptId)
+        assertEquals(LinkPhase.RtcStarting, machine.snapshot.phase)
+        assertEquals("已开", machine.snapshot.glassWifi)
+        assertTrue(effects.any { it is LinkEffect.StartRtc })
+        assertTrue(effects.any { it is LinkEffect.StartOffer })
+        assertTrue(machine.onRtcReady().isEmpty())
+        assertEquals("信令就绪", machine.snapshot.rtc)
+    }
+
+    @Test
     fun protocolKeepsAttemptId() {
         val offer = P2pOffer("DIRECT-AB", "passpass", "192.168.49.1", "aa:bb", "phone", "a9-1")
         val parsed = MediaWire.parseP2pOffer(MediaWire.p2pOfferJson(offer))

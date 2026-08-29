@@ -620,7 +620,6 @@ class DiningViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             Log.i(TAG, "talk on: $mic")
-            kickOpenVisionStream()
             main.postDelayed({
                 if (!_ui.value.talking) return@postDelayed
                 if (CxrLinkHost.pcmPackets > 0) return@postDelayed

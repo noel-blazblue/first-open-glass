@@ -1,3 +1,11 @@
+## 2026-08-29 — 开口不要开视频，ICE 只认 Direct
+
+- 场景：说话很久手机才听到；首次开画面卡在「打开眼镜 Wi-Fi」约 30 秒。
+- 误判：`rk_cmd` 协议改名把通道弄断了；或折叠黑屏等于没日志；或视频走蓝牙。
+- 根因：`startTalk` 立刻 `kickOpenVisionStream`，麦 PCM 和开流信令抢同一条 CXR 蓝牙。开流又等 `rtc.ready` 再 SDP，ICE 还试家里 STA / 公网 STUN。画面 RTP 走 `192.168.49`，蓝牙只走信令。
+- 以后先做：对话只开麦；`p2p.ready` 后立刻 `rtc.start` 并发 SDP；两端 ICE 只收发含 `192.168.49.` 的 candidate，不要公网 STUN。乐奇杀到餐页后若还在听，靠 `wantAudio` 重发 `mic.on`。
+- 不要做：开口绑开流；等 `rtc.ready` 再发 offer；把诊断栏「正在打开」当成电台没开（`p2p.ready` 后应标已开）。
+
 ## 2026-08-29 — 动态 HUD 左边被光机裁掉
 
 - 场景：`draw_hud` 画出来的线和字，镜片左边缺一块，像超出屏幕。

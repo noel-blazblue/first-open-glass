@@ -27,8 +27,9 @@ import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
 import java.util.concurrent.CopyOnWriteArrayList
 import com.glass.dining.shared.link.GlassLink
-import com.glass.dining.shared.link.PoseWire
 import com.glass.dining.shared.link.MediaWire
+import com.glass.dining.shared.link.P2pJoinPolicy
+import com.glass.dining.shared.link.PoseWire
 
 /**
  * 眼镜侧 WebRTC 探针：Camera2 → H.264 → 对端。
@@ -52,6 +53,7 @@ object GlassRtc {
     private var track: VideoTrack? = null
     private var send: ((String, String?) -> Unit)? = null
     private var remoteSet: Boolean = false
+    private var pendingRemoteSdp: Pair<String, String>? = null
     @Volatile private var initialized: Boolean = false
     private val poseSender = RtcPoseSender()
 
@@ -70,6 +72,10 @@ object GlassRtc {
     fun onRemoteSdp(raw: String?) {
         rtc.post {
             val assembled = sdpParts.push(raw) ?: return@post
+            if (pc == null || !active) {
+                pendingRemoteSdp = assembled
+                return@post
+            }
             applyRemoteSdp(assembled.first, assembled.second)
         }
     }
@@ -77,6 +83,10 @@ object GlassRtc {
     fun onRemoteIce(raw: String?) {
         rtc.post {
             val parsed = MediaWire.parseRtcIce(raw) ?: return@post
+            if (!P2pJoinPolicy.acceptIce(parsed.third)) {
+                Log.i(TAG, "drop ice ${parsed.third}")
+                return@post
+            }
             val ice = IceCandidate(parsed.first, parsed.second, parsed.third)
             val peer = pc
             if (peer != null && remoteSet) {
@@ -108,6 +118,11 @@ object GlassRtc {
             active = true
             emit(GlassLink.CMD_RTC_READY, null)
             emit(GlassLink.CMD_RTC_STAT, """{"ice":"new","side":"glass"}""")
+            val pending = pendingRemoteSdp
+            pendingRemoteSdp = null
+            if (pending != null) {
+                applyRemoteSdp(pending.first, pending.second)
+            }
             Log.i(TAG, "rtc started")
         } catch (error: Exception) {
             Log.w(TAG, "rtc start failed", error)
@@ -119,6 +134,7 @@ object GlassRtc {
     private fun stopOnRtc() {
         active = false
         remoteSet = false
+        pendingRemoteSdp = null
         pendingIce.clear()
         try {
             capturer?.stopCapture()
@@ -205,7 +221,7 @@ object GlassRtc {
         peer.setRemoteDescription(object : EmptySdp() {
             override fun onSetSuccess() {
                 remoteSet = true
-                pendingIce.forEach { peer.addIceCandidate(it) }
+                pendingIce.filter { P2pJoinPolicy.acceptIce(it.sdp) }.forEach { peer.addIceCandidate(it) }
                 pendingIce.clear()
                 if (kind == SessionDescription.Type.OFFER) {
                     createAnswer(peer)
@@ -245,9 +261,9 @@ object GlassRtc {
     }
 
     private fun rtcConfig(): PeerConnection.RTCConfiguration {
-        return PeerConnection.RTCConfiguration(iceServers()).apply {
+        return PeerConnection.RTCConfiguration(emptyList()).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.DISABLED
         }
     }
@@ -255,16 +271,6 @@ object GlassRtc {
     private fun p2pRtcOptions(): PeerConnectionFactory.Options {
         return PeerConnectionFactory.Options().apply {
             disableNetworkMonitor = true
-        }
-    }
-
-    private fun iceServers(): List<PeerConnection.IceServer> {
-        return listOf(
-            "stun:stun.l.google.com:19302",
-            "stun:stun.qq.com:3478",
-            "stun:stun.miwifi.com:3478",
-        ).map { uri ->
-            PeerConnection.IceServer.builder(uri).createIceServer()
         }
     }
 
@@ -287,6 +293,10 @@ object GlassRtc {
         }
         override fun onIceCandidate(candidate: IceCandidate?) {
             candidate ?: return
+            if (!P2pJoinPolicy.acceptIce(candidate.sdp)) {
+                Log.i(TAG, "skip ice ${candidate.sdp}")
+                return
+            }
             Log.i(TAG, "local ice ${candidate.sdp}")
             emit(
                 GlassLink.CMD_RTC_ICE,

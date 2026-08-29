@@ -9,6 +9,7 @@ class VisionLinkMachine(
         private set
 
     private var lastOffer: P2pOffer? = null
+    private var offerSent: Boolean = false
 
     fun begin(cxrReady: Boolean, glassReady: Boolean): List<LinkEffect> {
         if (snapshot.open) return emptyList()
@@ -31,6 +32,7 @@ class VisionLinkMachine(
             rtc = "未开",
         )
         lastOffer = null
+        offerSent = false
         return if (glassReady) enterGlassReady() else enterGlassStarting()
     }
 
@@ -46,6 +48,7 @@ class VisionLinkMachine(
         if (!snapshot.open) return emptyList()
         val attempt = snapshot.attemptId
         lastOffer = null
+        offerSent = false
         snapshot = snapshot.copy(
             phase = LinkPhase.GlassStarting,
             elapsedMs = elapsed(),
@@ -87,6 +90,7 @@ class VisionLinkMachine(
         snapshot = snapshot.copy(
             phase = LinkPhase.P2pReady,
             elapsedMs = elapsed(),
+            glassWifi = "已开",
             direct = "已加入 $ready",
         )
         return enterRtcStarting()
@@ -100,6 +104,11 @@ class VisionLinkMachine(
 
     fun onRtcReady(): List<LinkEffect> {
         if (snapshot.phase != LinkPhase.RtcStarting) return emptyList()
+        if (offerSent) {
+            snapshot = snapshot.copy(elapsedMs = elapsed(), rtc = "信令就绪")
+            return emptyList()
+        }
+        offerSent = true
         snapshot = snapshot.copy(elapsedMs = elapsed(), rtc = "信令就绪，正在发 offer")
         return listOf(LinkEffect.StartOffer(snapshot.attemptId))
     }
@@ -178,6 +187,7 @@ class VisionLinkMachine(
             attemptId = "",
         )
         lastOffer = null
+        offerSent = false
         return listOf(LinkEffect.Cleanup(attempt))
     }
 
@@ -231,12 +241,17 @@ class VisionLinkMachine(
     }
 
     private fun enterRtcStarting(): List<LinkEffect> {
+        offerSent = true
         snapshot = snapshot.copy(
             phase = LinkPhase.RtcStarting,
             elapsedMs = elapsed(),
-            rtc = "正在开流",
+            glassWifi = "已开",
+            rtc = "正在开流并发 offer",
         )
-        return listOf(LinkEffect.StartRtc(snapshot.attemptId))
+        return listOf(
+            LinkEffect.StartRtc(snapshot.attemptId),
+            LinkEffect.StartOffer(snapshot.attemptId),
+        )
     }
 
     private fun fail(reason: String, phase: LinkPhase): List<LinkEffect> {
@@ -248,6 +263,7 @@ class VisionLinkMachine(
             failedPhase = phase,
         )
         lastOffer = null
+        offerSent = false
         return listOf(LinkEffect.Cleanup(attempt))
     }
 
