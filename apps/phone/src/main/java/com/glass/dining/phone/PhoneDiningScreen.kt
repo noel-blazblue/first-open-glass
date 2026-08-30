@@ -54,7 +54,7 @@ fun PhoneDiningScreen(viewModel: DiningViewModel) {
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
     ) {
-        Text("到餐 Agent", color = HudColors.green, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text("灵梦", color = HudColors.green, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(state.status, color = TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
         Spacer(Modifier.height(12.dp))
         LinkDiagnostics(state.link)

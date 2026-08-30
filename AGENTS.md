@@ -1,104 +1,62 @@
 # AGENTS
 
-本仓库是 **乐奇 AI 眼镜 + 手机到餐 Agent** 项目，当前场景是到店餐饮 MVP。Agent 按 Cursor 项目 Skill 工作，不要凭记忆编造未经验证的接口。
+本仓库是 **乐奇 AI 眼镜 + 手机到餐 Agent** 项目（当前场景：到店餐饮）。
 
-## 开发立场
+---
 
-眼镜端主应用是 **CustomApp**（`apps/glass`），按 **原生 Android** 开发：Camera2、WifiP2p、WebRTC、AudioRecord、Wi‑Fi、定位等都是系统能力。这副眼镜能跑的 Android API，我们理论上都能做，**不要**用「消费版没有 / 企业版才有」自我设限，更不要把企业 `GlassSdk` / `PSecuritySDK` 当成唯一实现路径。
+## 一、 系统架构与分工
 
-乐奇（`com.rokid.sprite.aiapp`）+ CXR-L 只负责：连眼镜、CustomView 会话、把我们的 CustomApp 拉到前台。HUD 通道和信令走已验证的 CXR CustomCmd；媒体、组网、相机以 Android 原生为准。
+```
+[眼镜端 apps/glass] (采集/HUD) <--- link-api / CXR CustomCmd ---> [手机端 apps/phone] (决策/网络/模型)
+```
 
-公开文档 https://open.rokid.com/sdk 用来查 CXR 会话/授权；查不到的系统能力，以本仓库真机验证和 `lessons.md` 为准，可以说「CXR 文档没写」，然后继续用原生 API 做。
+1. **手机端（`apps/phone`）**
+   - 主脑角色：负责大模型编排、高德地图、外网请求、业务状态机。
+   - 通过 `CXRLink`（会话类型 `CUSTOMAPP`，乐奇包名 `com.rokid.sprite.aiapp`）建立连接并拉起眼镜端 CustomApp。
+2. **眼镜端（`apps/glass`）**
+   - 交互与感知角色：负责传感器采集（Camera2、AudioRecord、定位）与 480×640 HUD 渲染。
+   - **原生 Android 开发**：以 Android 原生 API 为主（系统版本号不含 `e` 时切勿强依赖企业专有 SDK），不自我设限。
+3. **共享与协议层（`shared` / `link-api`）**
+   - 纯逻辑（匹配、规划、HUD 数据结构、运行时协议）统一归入 `shared`。
+   - 协议字段两端保持一致，禁止在手机端或眼镜端私自新增平行字段。
 
-企业版整理（`.cursor/skills/rokid-glass3-sdk/`、`docs/`）只作对照，不是能力上限。
+---
 
-## 对话方法
+## 二、 交互与沟通规范
 
-对用户说话用中文。默认对方已经懂当前上下文，不要从文件名、字段表、调用栈讲起。
+1. **对话风格**
+   - **全中文交互**，默认对方了解上下文，不主动罗列代码文件名、字段表或调用栈。
+   - **先答所问**：一句话说清结论与判断，再补必要依据。
+   - **一条因果**：讲链路仅说明关键流转（例如：聊天模型触发 → 视觉模型解析 → 结果回传 → 语音播报）。
+   - **不问不展开**：不倒无意义的 JSON 或旁路细节；禁止反问让用户自行总结。
+2. **效果图与设计呈现**
+   - 需展示 HUD / UI 效果时，统一调用 Cursor 内置 **`GenerateImage`**（`namespace=cursor`，`toolName=GenerateImage`）。
+   - 出图当轮回复以简短说明 + 工具调用为主；**禁止**用 Python/Pillow 脚本生成本地图片或用 Markdown 伪引用。
+   - 眼镜显示画面规格：**480×640 竖屏**。
 
-- **先答所问。** 一句话把判断说完，再补必要依据。
-- **一条因果。** 讲链路只说谁发起、看了什么、结果给谁。例如：聊天模型点名看 → 视觉模型看图 → 结果回给聊天模型 → 聊天模型开口。
-- **不问不展开。** 分支、旁路、例外、JSON 字段默认不倒。会改结论的前提用一句带过。
-- **不要让用户自己总结。** 禁止用「所以你的理解是…吗」把拼图甩回去；先把结论讲清楚。
-- **细节等追问。** 用户说「那到底谁看图」再补那一层，不要提前把整张架构图铺开。
+---
 
-讲代码时同样如此：先说这轮行为变了什么，再点关键文件。不要用表格替代一句话。
+## 三、 设备与调试硬规则
 
-## 必读 Skill
+1. **眼镜 APK 安装**
+   - `apps/glass` **只能通过电脑 ADB 直装**（`./gradlew :apps:glass:installGlassAdb` 或 `adb -s <serial> install -r ...`），禁止通过手机中转或 `appUploadAndInstall`。
+   - 执行前先 `adb devices -l` 校验设备。多设备时必须显式指定 `ANDROID_SERIAL`（手机）或 `GLASS_SERIAL`（眼镜 `model:RG_glasses`）。
+   - `apps/phone:installDebug` 仅构建安装手机包并同步 `.env`，不分发眼镜 APK。
+2. **现场排查与经验沉淀**
+   - 连接异常时按 `docs/glass-connection-troubleshooting.md` 判定具体物理链路（电脑 ADB / CXR 蓝牙 / Wi-Fi / Wi-Fi Direct / WebRTC），勿笼统归因为「眼镜连不上」。
+   - 真机 ADB、RokidMirror、黑屏、CXR 回调等现场问题先查阅 `.cursor/skills/glass-dev/SKILL.md` 与 `lessons.md`；新坑闭环后及时在 `lessons.md` 沉淀记录。
 
-真机 ADB、RokidMirror、镜片看不见、CXR 连接、CustomView HUD 等现场问题，先读：
+---
 
-`.cursor/skills/glass-dev/SKILL.md`
+## 四、 代码编写准则
 
-并先查 `.cursor/skills/glass-dev/lessons.md`。新坑解决后按该 Skill 的模板追加 lesson。
-
-## 仓库约定
-
-- 主应用是 `apps/phone`：到餐 Agent，`CXRLink`，会话类型 `CUSTOMAPP`，乐奇包名 `com.rokid.sprite.aiapp`。
-- 眼镜 CustomApp 是 `apps/glass`，包名 `com.glass.dining.glass`。
-- 人读需求在 `demand.md`。
-- 真机系统版本号不含 `e` 时，不要把企业专有 SDK 硬接到主路径；缺的能力优先用 CustomApp 原生实现。
-- **做通用型智能 Agent，禁止定制化、写死业务。** 见下方「通用 Agent」。
-
-## 给用户看设计图
-
-用户要看 HUD / 界面效果图时，用 Cursor 的 **`GenerateImage`**：先 `GetDynamicTools`（`namespace=cursor`，`toolName=GenerateImage`），再 `CallDynamicTool` 出图。图会作为工具结果出现在聊天里。
-
-- 当轮以出图为主：短中文说明 + `GenerateImage`。回复里 **不要** 再 markdown `![]()` 引用，客户端会自己把图贴上。
-- **禁止** 用 Python / Pillow 自己画 PNG、把文件拷进仓库再贴路径、或 `Read` 图片后再用文字描述。那些图用户在聊天里看不见。
-
-眼镜能显示的画面为：480×640 竖屏
-
-## 眼镜 APK 安装（硬规则）
-
-`apps/glass` **只能**通过电脑 ADB 直装，禁止任何手机/CXR 中转。
-
-- 命令：`adb -s <RG_glasses serial> install -r ...`，或 `./gradlew :apps:glass:installGlassAdb`。
-- 安装前必须 `adb devices -l`。眼镜未出现、或 `model:RG_glasses` 匹配不到 / 匹配到多台时 **立即停止并报告**，禁止改走手机、`CXRLink.appUploadAndInstall`、把 APK 推进手机目录再上传。
-- 手机和眼镜按 `model` / serial 分别校验后再装：手机 `installDebug` 必须设 `ANDROID_SERIAL`（AGP 否则会装到所有设备，包括眼镜），眼镜用 `GLASS_SERIAL` 或唯一 `model:RG_glasses`。禁止依赖默认 adb 设备。
-- `apps/phone:installDebug` 只装手机包并同步手机 `.env`，不再构建或推送眼镜 APK。
-
-## 连接问题
-
-不要说「眼镜连不上」。先按 [`docs/glass-connection-troubleshooting.md`](docs/glass-connection-troubleshooting.md) 判定是哪一条链路（电脑 ADB / CXR 蓝牙 / 眼镜 Wi-Fi / Wi-Fi Direct / WebRTC），再改代码。闭环后同步更新该文档和 `.cursor/skills/glass-dev/lessons.md`。
-
-## 代码编写准则
-
-写新代码、改旧代码都按这个尺度；宁可先拆模块，也不要继续往大文件里堆。
-
-### 体量
-
-- **单文件目标 ≤ 400 行**（含空行与 import）。到 **500 行必须拆**，禁止在已超限的文件上继续加职责。
-- 单个函数目标 ≤ 80 行；超过就抽私有函数或独立类型。
-- ViewModel / Activity / `*Host` 只做编排与生命周期，不塞领域算法、协议解析、HUD 排版。
-- 现有超限文件（例如 `DiningViewModel`）改功能时顺手拆出一块，不要再加厚。
-
-### 模块抽象
-
-- **一个文件一个主职责**。按领域分包，不按技术层乱堆：`place/`、`nav/`、`vision/`、`hud/`、`engine/`、`catalog/`、`agent/`。
-- `shared/agent` 只放运行时协议（世界快照、LLM 回合、工具规格）。地点句柄 `PlaceRef` 和资料 `PlaceProfile` 放 `shared/place`，不要把高德字段堆进 `WorldContext` 或 `PlaceRef`。
-- 纯逻辑（匹配、规划、协议、HUD 数据结构）放 `shared`；Android 系统能力（GPS、相机、CXR、TTS）放对应 `apps/*`。
-- 新能力优先新类型 + 新文件，再由现有编排类调用。不要把导航、视觉、LLM、语音塞进同一个 class。
-- 抽取边界是「能单独理解、单独测」：输入输出清晰。不要为了行数把紧密耦合的 20 行拆成一堆单行文件，也不要建 `Utils.kt` 垃圾桶。
-- 协议字段、数据模型改动落在 `shared` / `link-api`，两端一起改，禁止在手机或眼镜端私自加平行字段。
-
-### 通用 Agent
-
-产品是通用到餐 Agent，不是某一家店、某一句话、某一个识别错误的专用程序。
-
-- 意图靠模型 + 工具 + 会话上下文（目录、候选、当前店、画面证据），**不靠固定口令、谐音表、品牌白名单、if 某店名**。
-- 禁止为单个案例写死映射（例如把「开滴滴」替换成「海底捞」）。世界上店名和说法无限，表补不完，还会误伤真正说的那句话。
-
-### 实现习惯
-
-- 先读调用链再改，复用已有抽象；禁止复制一份「差不多」的实现。
-- 禁止 mock 业务数据。测试用固定输入断言纯函数，不要在主路径里塞假店、假 GPS。
-- 新增可测逻辑时补单元测试，放在对应模块的 `src/test`。
-
-## 典型流程
-
-1. 手机已装乐奇并连上这副眼镜。
-2. 连接失败先查 `lessons.md`（双回调、token、乐奇版本），再改代码。
-3. 改动 `apps/phone` 代码后，必须安装到手机上。
-4. 改动 `apps/glass` 后，必须用 `installGlassAdb` 直装到眼镜，禁止用手机更新眼镜包。
-5. 这是生产级别的应用，禁止 mock 数据。
+1. **体量控制**
+   - **单文件目标 ≤ 400 行**（超过 500 行必须拆分，禁止在大文件上继续堆砌职责）。
+   - **单函数目标 ≤ 80 行**；ViewModel / Activity / `*Host` 仅负责编排与生命周期，不塞领域算法与渲染排版。
+2. **模块与抽象**
+   - 严格按领域分包（`place/`、`nav/`、`vision/`、`hud/`、`agent/`、`catalog/`），避免按技术层杂糅。
+   - `shared/agent` 仅承载运行时上下文协议；地点与资料分别收敛至 `shared/place`。
+   - 禁止设立 `Utils.kt` 等职责模糊的垃圾桶类；抽取逻辑以「职责单一、输入输出明确、可单独测试」为原则。
+3. **通用 Agent 与真实数据**
+   - 遵循开放世界语义，依赖模型提案与纯逻辑 reducer 处理意图，**严禁写死特定店名、口令或谐音映射字典**。
+   - 生产级代码严禁 mock 虚假业务数据；新增纯逻辑能力须在对应模块 `src/test` 补齐单元测试。

@@ -58,8 +58,9 @@
     <application
         android:name=".PhoneDiningApp"
         android:allowBackup="false"
-        android:icon="@android:drawable/ic_menu_mylocation"
-        android:label="到店餐饮陪伴"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.DiningPhone"
         android:usesCleartextTraffic="true"
