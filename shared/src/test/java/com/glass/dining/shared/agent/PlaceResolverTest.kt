@@ -136,6 +136,15 @@ class PlaceResolverTest {
     }
 
     @Test
+    fun mergeKeepsSearchRankOrder() {
+        val farther = PlaceRef("kfc", "肯德基(万象店)", distanceMeters = 643).asProfile()
+        val nearer = PlaceRef("bakery", "金祝面包房", distanceMeters = 129).asProfile()
+        val merged = PlaceResolver.merge(emptyList(), listOf(farther, nearer))
+        assertEquals("肯德基(万象店)", merged[0].name)
+        assertEquals("金祝面包房", merged[1].name)
+    }
+
+    @Test
     fun poiStoreDoesNotInventQueue() {
         val store = PlaceResolver.toStore(PlaceRef("p", "药店", distanceMeters = 80))
         assertFalse(store.catalogBacked)

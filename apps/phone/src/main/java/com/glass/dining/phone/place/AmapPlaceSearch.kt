@@ -23,7 +23,7 @@ object AmapPlaceSearch {
         }
         val loc = String.format(Locale.US, "%.6f,%.6f", origin.lng, origin.lat)
         val url = "$ENDPOINT?key=${enc(key)}&location=${enc(loc)}&keywords=${enc(keyword)}" +
-            "&radius=$radius&sortrule=distance&page_size=10&page_num=1" +
+            "&radius=$radius&sortrule=weight&page_size=10&page_num=1" +
             "&show_fields=${enc("business,indoor")}"
         val raw = get(url) ?: return AmapPlaceJson.AroundResult(
             false,

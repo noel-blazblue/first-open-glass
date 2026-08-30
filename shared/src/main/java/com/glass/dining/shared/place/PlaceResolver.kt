@@ -104,7 +104,7 @@ object PlaceResolver {
             if (out.any { samePlace(it, poi) }) continue
             out.add(poi.copy(ref = poi.ref.copy(source = PlaceRef.SOURCE_AMAP)))
         }
-        return out.sortedBy { if (it.distanceMeters > 0) it.distanceMeters else Int.MAX_VALUE }
+        return out
     }
 
     fun resolve(
